@@ -29,7 +29,6 @@ sheduled_sae:
 	make train_sae
 
 train_sae:
-	python train_sae.py 11 16; \
 	python train_sae.py 17 22; \
 	python train_sae.py 23 28
 

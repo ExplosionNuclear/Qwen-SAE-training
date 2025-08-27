@@ -32,8 +32,8 @@ def main():
         l1_coefficient=1e-3,
         lr_scheduler_name="constantwithwarmup",
         lr_warm_up_steps=1000,
-        train_batch_size=4096,         
-        n_batches_in_buffer=200,
+        train_batch_size=4096*8,         
+        n_batches_in_buffer=20,
         total_training_tokens=2_000_000,  
         store_batch_size=16,    
 
@@ -41,7 +41,7 @@ def main():
         wandb_log_frequency=10,
         wandb_api_key="a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c",
         wandb_entity="rokser9-lucid-layers",
-        eval_every_n_steps=100_000,
+        eval_every_n_steps=80,
 
         logger_backend="clearml",
         
