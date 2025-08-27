@@ -8,6 +8,7 @@ from transformer_lens import HookedTransformer
 from transformer_lens.utils import get_act_name
 
 import wandb
+from clearml import Logger as ClearMLLogger
 from sae_training.activations_store import ActivationsStore
 from sae_training.sparse_autoencoder import SparseAutoencoder
 
@@ -70,19 +71,28 @@ def run_evals(
     l2_norm_out = torch.norm(sae_out, dim=-1)
     l2_norm_ratio = l2_norm_out / l2_norm_in
 
-    wandb.log(
-        {
-            # l2 norms
-            f"metrics/l2_norm{suffix}": l2_norm_out.mean().item(),
-            f"metrics/l2_ratio{suffix}": l2_norm_ratio.mean().item(),
-            # CE Loss
-            f"metrics/CE_loss_score{suffix}": recons_score,
-            f"metrics/ce_loss_without_sae{suffix}": ntp_loss,
-            f"metrics/ce_loss_with_sae{suffix}": recons_loss,
-            f"metrics/ce_loss_with_ablation{suffix}": zero_abl_loss,
-        },
-        step=n_training_steps,
-    )
+    metrics = {
+        f"metrics/l2_norm{suffix}": l2_norm_out.mean().item(),
+        f"metrics/l2_ratio{suffix}": l2_norm_ratio.mean().item(),
+        f"metrics/CE_loss_score{suffix}": recons_score,
+        f"metrics/ce_loss_without_sae{suffix}": ntp_loss,
+        f"metrics/ce_loss_with_sae{suffix}": recons_loss,
+        f"metrics/ce_loss_with_ablation{suffix}": zero_abl_loss,
+    }
+    if getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "wandb" and wandb.run is not None:
+        wandb.log(metrics, step=n_training_steps)
+    elif getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "clearml":
+        for key, value in metrics.items():
+            if "/" in key:
+                title, series = key.split("/", 1)
+            else:
+                title, series = "metrics", key
+            ClearMLLogger.current_logger().report_scalar(
+                title=title,
+                series=series,
+                value=float(value),
+                iteration=n_training_steps,
+            )
 
     head_index = sparse_autoencoder.cfg.hook_point_head_index
 
@@ -141,14 +151,24 @@ def run_evals(
         )
         kl_result_ablation = kl_result_ablation.sum(dim=-1).numpy()
 
-        if wandb.run is not None:
-            wandb.log(
-                {
-                    f"metrics/kldiv_reconstructed{suffix}": kl_result_reconstructed.mean().item(),
-                    f"metrics/kldiv_ablation{suffix}": kl_result_ablation.mean().item(),
-                },
-                step=n_training_steps,
-            )
+        kls = {
+            f"metrics/kldiv_reconstructed{suffix}": kl_result_reconstructed.mean().item(),
+            f"metrics/kldiv_ablation{suffix}": kl_result_ablation.mean().item(),
+        }
+        if getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "wandb" and wandb.run is not None:
+            wandb.log(kls, step=n_training_steps)
+        elif getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "clearml":
+            for key, value in kls.items():
+                if "/" in key:
+                    title, series = key.split("/", 1)
+                else:
+                    title, series = "metrics", key
+                ClearMLLogger.current_logger().report_scalar(
+                    title=title,
+                    series=series,
+                    value=float(value),
+                    iteration=n_training_steps,
+                )
 
 
 def recons_loss_batched(

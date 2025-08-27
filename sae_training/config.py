@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, cast
 
 import torch
+from transformer_lens import HookedTransformer
 
 import wandb
 
@@ -58,6 +59,7 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
     expansion_factor: int = 4
     from_pretrained_path: Optional[str] = None
     d_sae: Optional[int] = None
+    model: Optional[HookedTransformer] = None
 
     # Training Parameters
     l1_coefficient: float = 1e-3
@@ -82,10 +84,25 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
     run_name: Optional[str] = None
     wandb_entity: Optional[str] = None
     wandb_log_frequency: int = 10
+    wandb_api_key: Optional[str] = None
+
+    # Hugging Face Hub
+    push_to_hub: bool = False
+    hub_repo_id: Optional[str] = None  # e.g., "username/sae-llama32"
+    hub_private: bool = True
+    hub_token: Optional[str] = None
+
+    # Logging backend selection: "wandb", "clearml", or "none"
+    logger_backend: str = "wandb"
+    # ClearML optional fields (credentials are read from env/.env by ClearML itself)
+    clearml_project: Optional[str] = None
+    clearml_task_name: Optional[str] = None
+    clearml_tags: Optional[list[str]] = None
 
     # Misc
     n_checkpoints: int = 0
     checkpoint_path: str = "checkpoints"
+    eval_every_n_steps: Optional[int] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -132,6 +149,10 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
 
         total_wandb_updates = total_training_steps // self.wandb_log_frequency
         print(f"Total wandb updates: {total_wandb_updates}")
+
+        # Default eval cadence: every 10 wandb log intervals if not specified
+        if self.eval_every_n_steps is None:
+            self.eval_every_n_steps = max(1, self.wandb_log_frequency * 10)
 
         # how many times will we sample dead neurons?
         # assert self.dead_feature_window <= self.feature_sampling_window, "dead_feature_window must be smaller than feature_sampling_window"

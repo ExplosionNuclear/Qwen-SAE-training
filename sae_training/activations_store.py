@@ -11,6 +11,8 @@ from datasets import (
 )
 from torch.utils.data import DataLoader
 from transformer_lens import HookedTransformer
+from urllib.parse import urlparse
+import glob
 
 HfDataset = DatasetDict | Dataset | IterableDatasetDict | IterableDataset
 
@@ -30,9 +32,45 @@ class ActivationsStore:
     ):
         self.cfg = cfg
         self.model = model
-        self.dataset = dataset or load_dataset(
-            cfg.dataset_path, split="train", streaming=True
-        )
+        if dataset is not None:
+            self.dataset = dataset
+        else:
+            ds_path = cfg.dataset_path
+            if isinstance(ds_path, str):
+                is_url = "://" in ds_path
+                path_for_ext = urlparse(ds_path).path if is_url else ds_path
+                lower = path_for_ext.lower()
+                def use(builder: str, files):
+                    return load_dataset(builder, data_files=files, split="train", streaming=True)
+                if is_url or os.path.exists(path_for_ext):
+                    if lower.endswith((".jsonl", ".jsonl.gz", ".json", ".json.gz")):
+                        self.dataset = use("json", ds_path)
+                    elif lower.endswith((".parquet", ".parq")):
+                        self.dataset = use("parquet", ds_path)
+                    elif lower.endswith((".txt", ".txt.gz")):
+                        self.dataset = use("text", ds_path)
+                    elif os.path.isdir(path_for_ext):
+                        # Try to autodetect files inside a directory
+                        for patterns, builder in [
+                            (("**/*.jsonl.gz", "**/*.jsonl", "**/*.json.gz", "**/*.json"), "json"),
+                            (("**/*.parquet", "**/*.parq"), "parquet"),
+                            (("**/*.txt.gz", "**/*.txt"), "text"),
+                        ]:
+                            files = []
+                            for p in patterns:
+                                files.extend(glob.glob(os.path.join(path_for_ext, p), recursive=True))
+                            if files:
+                                self.dataset = use(builder, files)
+                                break
+                        else:
+                            raise ValueError(f"No supported data files found in directory: {ds_path}")
+                    else:
+                        # Fall back to HF hub id or script name
+                        self.dataset = load_dataset(ds_path, split="train", streaming=True, trust_remote_code=True)
+                else:
+                    self.dataset = load_dataset(ds_path, split="train", streaming=True, trust_remote_code=True)
+            else:
+                self.dataset = load_dataset(ds_path, split="train", streaming=True, trust_remote_code=True)
         self.iterable_dataset = iter(self.dataset)
 
         # Check if dataset is tokenized

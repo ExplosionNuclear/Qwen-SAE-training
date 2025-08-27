@@ -39,6 +39,8 @@ class DashboardRunner:
         use_wandb: bool = False,
         continue_existing_dashboard: bool = True,
         final_index: Optional[int] = None,
+        dataset_path: Optional[str] = None,
+        is_dataset_tokenized: Optional[bool] = None,
     ):
         """ """
 
@@ -80,6 +82,10 @@ class DashboardRunner:
             self.sae_path = sae_path
             self.feature_sparsity = None
 
+        self.dataset_path = dataset_path
+        self.is_dataset_tokenized = is_dataset_tokenized
+        self.final_index = final_index
+
         if init_session:
             self.init_sae_session()
 
@@ -87,29 +93,18 @@ class DashboardRunner:
         self.max_batch_size = max_batch_size
         self.buffer_tokens = buffer_tokens
         self.use_wandb = use_wandb
-        self.final_index = (
-            final_index
-            if final_index is not None
-            else self.sparse_autoencoder.cfg.d_sae
-        )
+        
         self.n_batches_to_sample_from = n_batches_to_sample_from
         self.n_prompts_to_select = n_prompts_to_select
 
         # Deal with file structure
         if not os.path.exists(dashboard_parent_folder):
             os.makedirs(dashboard_parent_folder)
+        
+        self.dashboard_parent_folder = dashboard_parent_folder
+        self.continue_existing_dashboard = continue_existing_dashboard
 
-        self.dashboard_folder = (
-            f"{dashboard_parent_folder}/{self.get_dashboard_folder_name()}"
-        )
-        if not os.path.exists(self.dashboard_folder):
-            os.makedirs(self.dashboard_folder)
-
-        if not continue_existing_dashboard:
-            # check if there are files there and if so abort
-            if len(os.listdir(self.dashboard_folder)) > 0:
-                raise ValueError("Dashboard folder not empty. Aborting.")
-
+        
     def get_feature_sparsity_path(self, wandb_artifact_path: str):
         prefix = wandb_artifact_path.split(":")[0]
         return f"{prefix}_log_feature_sparsity:v9"
@@ -123,13 +118,39 @@ class DashboardRunner:
         return dashboard_folder_name
 
     def init_sae_session(self):
+        overrides = {}
+        if self.dataset_path is not None:
+            overrides["dataset_path"] = self.dataset_path
+        if self.is_dataset_tokenized is not None:
+            overrides["is_dataset_tokenized"] = self.is_dataset_tokenized
         (
             self.model,
             sae_group,
             self.activation_store,
-        ) = LMSparseAutoencoderSessionloader.load_session_from_pretrained(self.sae_path)
+        ) = LMSparseAutoencoderSessionloader.load_session_from_pretrained(
+            self.sae_path, cfg_overrides=overrides
+        )
         # TODO: handle multiple autoencoders
         self.sparse_autoencoder = sae_group.autoencoders[0]
+        self.final_index = self.final_index if self.final_index is not None else self.sparse_autoencoder.cfg.d_sae
+        self.dashboard_folder = (
+            f"{self.dashboard_parent_folder}/{self.get_dashboard_folder_name()}"
+        )
+        if not os.path.exists(self.dashboard_folder):
+            os.makedirs(self.dashboard_folder)
+
+        if not self.continue_existing_dashboard:
+            # check if there are files there and if so abort
+            if len(os.listdir(self.dashboard_folder)) > 0:
+                raise ValueError("Dashboard folder not empty. Aborting.")
+
+        # (
+        #     self.model,
+        #     sae_group,
+        #     self.activation_store,
+        # ) = LMSparseAutoencoderSessionloader.load_session_from_pretrained(self.sae_path)
+        # # TODO: handle multiple autoencoders
+        # self.sparse_autoencoder = sae_group.autoencoders[0]
 
     def get_tokens(
         self, n_batches_to_sample_from: int = 2**12, n_prompts_to_select: int = 4096 * 6
@@ -325,7 +346,8 @@ class DashboardRunner:
                     minibatch_size_tokens=64,
                     first_group_size=20,
                     other_groups_size=5,
-                    buffer=(self.buffer_tokens, self.buffer_tokens),
+                    # Avoid out-of-bounds sequence indices in sae_vis by not adding right-context
+                    buffer=(self.buffer_tokens, 0),
                     features=interesting_features,
                     verbose=True,
                     include_left_tables=False,

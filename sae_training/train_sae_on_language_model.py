@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from typing import Any, NamedTuple, cast
 
 import torch
@@ -8,6 +9,10 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 import wandb
+from huggingface_hub import HfApi, create_repo, upload_file
+from clearml import Task
+from clearml import Logger as ClearMLLogger
+
 from sae_training.activations_store import ActivationsStore
 from sae_training.evals import run_evals
 from sae_training.geometric_median import compute_geometric_median
@@ -106,10 +111,7 @@ def train_sae_group_on_language_model(
         mse_losses: list[torch.Tensor] = []
         l1_losses: list[torch.Tensor] = []
 
-        for (
-            sparse_autoencoder,
-            ctx,
-        ) in zip(sae_group, train_contexts):
+        for (sparse_autoencoder, ctx) in zip(sae_group, train_contexts):
             wandb_suffix = _wandb_log_suffix(sae_group.cfg, sparse_autoencoder.cfg)
             step_output = _train_step(
                 sparse_autoencoder=sparse_autoencoder,
@@ -124,31 +126,38 @@ def train_sae_group_on_language_model(
             )
             mse_losses.append(step_output.mse_loss)
             l1_losses.append(step_output.l1_loss)
-            if use_wandb:
+            
+            if (n_training_steps + 1) % wandb_log_frequency == 0:
                 with torch.no_grad():
-                    if (n_training_steps + 1) % wandb_log_frequency == 0:
+                    
+                    output_dict = _build_train_step_log_dict(
+                        sparse_autoencoder,
+                        step_output,
+                        ctx,
+                        wandb_suffix,
+                        n_training_tokens,
+                    )
+                    if sparse_autoencoder.cfg.logger_backend == "wandb":
                         wandb.log(
-                            _build_train_step_log_dict(
-                                sparse_autoencoder,
-                                step_output,
-                                ctx,
-                                wandb_suffix,
-                                n_training_tokens,
-                            ),
+                            output_dict,
                             step=n_training_steps,
                         )
-
-                    # record loss frequently, but not all the time.
-                    if (n_training_steps + 1) % (wandb_log_frequency * 10) == 0:
-                        sparse_autoencoder.eval()
-                        run_evals(
-                            sparse_autoencoder,
-                            activation_store,
-                            model,
-                            n_training_steps,
-                            suffix=wandb_suffix,
+                    elif sparse_autoencoder.cfg.logger_backend == "clearml":
+                        _log_dict_to_clearml(
+                            output_dict,
+                            step=n_training_steps,
                         )
-                        sparse_autoencoder.train()
+            
+            if (n_training_steps + 1) % sae_group.cfg.eval_every_n_steps == 0:
+                sparse_autoencoder.eval()
+                run_evals(
+                    sparse_autoencoder,
+                    activation_store,
+                    model,
+                    n_training_steps,
+                    suffix=wandb_suffix,
+                )
+                sparse_autoencoder.train()
 
         # checkpoint if at checkpoint frequency
         if checkpoint_thresholds and n_training_tokens > checkpoint_thresholds[0]:
@@ -298,20 +307,20 @@ def _train_step(
         log_feature_sparsity = _log_feature_sparsity(feature_sparsity)
 
         if use_wandb:
-            wandb_histogram = wandb.Histogram(log_feature_sparsity.numpy())
-            wandb.log(
-                {
-                    f"metrics/mean_log10_feature_sparsity{wandb_suffix}": log_feature_sparsity.mean().item(),
-                    f"plots/feature_density_line_chart{wandb_suffix}": wandb_histogram,
-                    f"sparsity/below_1e-5{wandb_suffix}": (feature_sparsity < 1e-5)
-                    .sum()
-                    .item(),
-                    f"sparsity/below_1e-6{wandb_suffix}": (feature_sparsity < 1e-6)
-                    .sum()
-                    .item(),
-                },
-                step=n_training_steps,
-            )
+            metrics_dict = {
+                f"metrics/mean_log10_feature_sparsity{wandb_suffix}": log_feature_sparsity.mean().item(),
+                f"sparsity/below_1e-5{wandb_suffix}": (feature_sparsity < 1e-5).sum().item(),
+                f"sparsity/below_1e-6{wandb_suffix}": (feature_sparsity < 1e-6).sum().item(),
+            }
+            if sparse_autoencoder.cfg.logger_backend == "wandb" and use_wandb:
+                wandb_histogram = wandb.Histogram(log_feature_sparsity.numpy())
+                wandb.log(
+                    {**metrics_dict, f"plots/feature_density_line_chart{wandb_suffix}": wandb_histogram},
+                    step=n_training_steps,
+                )
+            elif sparse_autoencoder.cfg.logger_backend == "clearml":
+                _log_dict_to_clearml(metrics_dict, step=n_training_steps)
+
 
         ctx.act_freq_scores = torch.zeros(
             sparse_autoencoder.cfg.d_sae, device=sparse_autoencoder.cfg.device
@@ -404,6 +413,22 @@ def _build_train_step_log_dict(
     }
 
 
+def _log_dict_to_clearml(log_dict: dict[str, Any], step: int) -> None:
+    """Report a dict of scalars to ClearML, grouping by the prefix before '/'"""
+    for key, value in log_dict.items():
+        if isinstance(value, (int, float)):
+            if "/" in key:
+                title, series = key.split("/", 1)
+            else:
+                title, series = "metrics", key
+            ClearMLLogger.current_logger().report_scalar(
+                title=title,
+                series=series,
+                value=float(value),
+                iteration=step,
+            )
+
+
 class SaveCheckpointOutput(NamedTuple):
     path: str
     log_feature_sparsity_path: str
@@ -443,6 +468,37 @@ def _save_checkpoint(
         )
         sparsity_artifact.add_file(log_feature_sparsity_path)
         wandb.log_artifact(sparsity_artifact)
+
+    # Optionally push checkpoint to Hugging Face Hub
+    if getattr(sae_group.cfg, "push_to_hub", False) and getattr(
+        sae_group.cfg, "hub_repo_id", None
+    ):
+        HfApi(token=getattr(sae_group.cfg, "hub_token", None))
+        try:
+            create_repo(
+                repo_id=sae_group.cfg.hub_repo_id,
+                private=getattr(sae_group.cfg, "hub_private", True),
+                exist_ok=True,
+                token=getattr(sae_group.cfg, "hub_token", None),
+            )
+        except Exception:
+            pass
+        # Upload model checkpoint and sparsity logs
+        try:
+            upload_file(
+                path_or_fileobj=path,
+                path_in_repo=os.path.basename(path),
+                repo_id=sae_group.cfg.hub_repo_id,
+                token=getattr(sae_group.cfg, "hub_token", None),
+            )
+            upload_file(
+                path_or_fileobj=log_feature_sparsity_path,
+                path_in_repo=os.path.basename(log_feature_sparsity_path),
+                repo_id=sae_group.cfg.hub_repo_id,
+                token=getattr(sae_group.cfg, "hub_token", None),
+            )
+        except Exception as e:
+            print(f"Warning: failed to upload to HF Hub: {e}")
     return SaveCheckpointOutput(path, log_feature_sparsity_path, log_feature_sparsities)
 
 
