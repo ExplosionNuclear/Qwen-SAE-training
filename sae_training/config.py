@@ -102,6 +102,7 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
     # Misc
     n_checkpoints: int = 0
     checkpoint_path: str = "checkpoints"
+    local_checkpoints: int = 3  # Keep only this many most recent checkpoints locally
     eval_every_n_steps: Optional[int] = None
 
     def __post_init__(self):

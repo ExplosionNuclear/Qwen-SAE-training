@@ -8,6 +8,8 @@ from typing import Any, Iterator
 import torch
 
 from sae_training.sparse_autoencoder import SparseAutoencoder
+from sae_training.config import LanguageModelSAERunnerConfig
+from safetensors.torch import load_file as safetensors_load_file
 
 
 class SAEGroup:
@@ -89,9 +91,58 @@ class SAEGroup:
                     group = pickle.load(f)
             except Exception as e:
                 raise IOError(f"Error loading the state dictionary from .pkl file: {e}")
+        elif path.endswith(".safetensors"):
+            tensors = safetensors_load_file(path, device="cpu")
+
+            indices: set[int] = set()
+            for key in tensors.keys():
+                if "." not in key:
+                    continue
+                idx_str, _ = key.split(".", 1)
+                try:
+                    indices.add(int(idx_str))
+                except ValueError:
+                    continue
+
+            # Build group cfg from first AE inferred cfg
+            inferred_ae_cfgs: list[LanguageModelSAERunnerConfig] = []
+            for idx in sorted(indices):
+                w_dec = tensors.get(f"{idx}.W_dec")
+                w_enc = tensors.get(f"{idx}.W_enc")
+                if w_dec is None or w_enc is None:
+                    raise ValueError(f"Missing expected tensors for autoencoder index {idx}")
+                d_sae = int(w_dec.shape[0])
+                d_in = int(w_dec.shape[1])
+                
+                cfg = LanguageModelSAERunnerConfig(
+                    d_in=d_in,
+                    d_sae=d_sae,
+                    device="cpu",
+                    dtype=w_dec.dtype,
+                    log_to_wandb=False,
+                    expansion_factor=d_sae // d_in,
+                )
+                inferred_ae_cfgs.append(cfg)
+
+            group_cfg = dataclasses.replace(inferred_ae_cfgs[0])
+            instance = cls(cfg=group_cfg)
+            instance.autoencoders = []
+
+            # Reconstruct each SAE and load its tensors
+            for idx, cfg in enumerate(inferred_ae_cfgs):
+                ae = SparseAutoencoder(cfg)
+                state_dict_i: dict[str, torch.Tensor] = {}
+                for k, v in tensors.items():
+                    if k.startswith(f"{idx}."):
+                        sub_key = k.split(".", 1)[1]
+                        state_dict_i[sub_key] = v
+                ae.load_state_dict(state_dict_i, strict=True)
+                instance.autoencoders.append(ae)
+
+            return instance
         else:
             raise ValueError(
-                f"Unexpected file extension: {path}, supported extensions are .pt, .pkl, and .pkl.gz"
+                f"Unexpected file extension: {path}, supported extensions are .pt, .pkl, .pkl.gz and .safetensors"
             )
 
         return group
@@ -116,14 +167,22 @@ class SAEGroup:
         folder = os.path.dirname(path)
         os.makedirs(folder, exist_ok=True)
 
-        if path.endswith(".pt"):
+        if path.endswith(".safetensors"):
+            # Export all autoencoder parameters into a flat tensor dict
+            tensors: dict[str, torch.Tensor] = {}
+            for idx, ae in enumerate(self.autoencoders):
+                for k, v in ae.state_dict().items():
+                    tensors[f"{idx}.{k}"] = v.detach().cpu()
+            from safetensors.torch import save_file
+            save_file(tensors, path)
+        elif path.endswith(".pt"):
             torch.save(self, path)
         elif path.endswith("pkl.gz"):
             with gzip.open(path, "wb") as f:
                 pickle.dump(self, f)
         else:
             raise ValueError(
-                f"Unexpected file extension: {path}, supported extensions are .pt and .pkl.gz"
+                f"Unexpected file extension: {path}, supported extensions are .safetensors, .pt and .pkl.gz"
             )
 
         print(f"Saved model to {path}")

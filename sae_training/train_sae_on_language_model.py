@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 import os
+import glob
+import re
 from typing import Any, NamedTuple, cast
 
 import torch
@@ -441,8 +443,16 @@ def _save_checkpoint(
     checkpoint_name: int | str,
     wandb_aliases: list[str] | None = None,
 ) -> SaveCheckpointOutput:
+    # Clean up old checkpoints before saving new one
+    if hasattr(sae_group.cfg, 'local_checkpoints') and sae_group.cfg.local_checkpoints > 0:
+        _cleanup_old_checkpoints(
+            sae_group.cfg.checkpoint_path, 
+            sae_group.get_name(), 
+            sae_group.cfg.local_checkpoints
+        )
+    
     path = (
-        f"{sae_group.cfg.checkpoint_path}/{checkpoint_name}_{sae_group.get_name()}.pt"
+        f"{sae_group.cfg.checkpoint_path}/{checkpoint_name}_{sae_group.get_name()}.safetensors"
     )
     for sae in sae_group:
         sae.set_decoder_norm_to_unit_norm()
@@ -452,53 +462,29 @@ def _save_checkpoint(
         _log_feature_sparsity(ctx.feature_sparsity) for ctx in train_contexts
     ]
     torch.save(log_feature_sparsities, log_feature_sparsity_path)
-    if sae_group.cfg.log_to_wandb:
-        model_artifact = wandb.Artifact(
-            f"{sae_group.get_name()}",
-            type="model",
-            metadata=dict(sae_group.cfg.__dict__),
-        )
-        model_artifact.add_file(path)
-        wandb.log_artifact(model_artifact, aliases=wandb_aliases)
-
-        sparsity_artifact = wandb.Artifact(
-            f"{sae_group.get_name()}_log_feature_sparsity",
-            type="log_feature_sparsity",
-            metadata=dict(sae_group.cfg.__dict__),
-        )
-        sparsity_artifact.add_file(log_feature_sparsity_path)
-        wandb.log_artifact(sparsity_artifact)
 
     # Optionally push checkpoint to Hugging Face Hub
     if getattr(sae_group.cfg, "push_to_hub", False) and getattr(
         sae_group.cfg, "hub_repo_id", None
     ):
-        HfApi(token=getattr(sae_group.cfg, "hub_token", None))
-        try:
-            create_repo(
-                repo_id=sae_group.cfg.hub_repo_id,
-                private=getattr(sae_group.cfg, "hub_private", True),
-                exist_ok=True,
-                token=getattr(sae_group.cfg, "hub_token", None),
-            )
-        except Exception:
-            pass
-        # Upload model checkpoint and sparsity logs
-        try:
-            upload_file(
-                path_or_fileobj=path,
-                path_in_repo=os.path.basename(path),
-                repo_id=sae_group.cfg.hub_repo_id,
-                token=getattr(sae_group.cfg, "hub_token", None),
-            )
-            upload_file(
-                path_or_fileobj=log_feature_sparsity_path,
-                path_in_repo=os.path.basename(log_feature_sparsity_path),
-                repo_id=sae_group.cfg.hub_repo_id,
-                token=getattr(sae_group.cfg, "hub_token", None),
-            )
-        except Exception as e:
-            print(f"Warning: failed to upload to HF Hub: {e}")
+        create_repo(
+            repo_id=sae_group.cfg.hub_repo_id,
+            private=getattr(sae_group.cfg, "hub_private", True),
+            exist_ok=True,
+        )
+
+    
+        upload_file(
+            path_or_fileobj=path,
+            path_in_repo=os.path.basename(path),
+            repo_id=sae_group.cfg.hub_repo_id,
+        )
+        upload_file(
+            path_or_fileobj=log_feature_sparsity_path,
+            path_in_repo=os.path.basename(log_feature_sparsity_path),
+            repo_id=sae_group.cfg.hub_repo_id,
+        )
+        
     return SaveCheckpointOutput(path, log_feature_sparsity_path, log_feature_sparsities)
 
 
@@ -506,3 +492,66 @@ def _log_feature_sparsity(
     feature_sparsity: torch.Tensor, eps: float = 1e-10
 ) -> torch.Tensor:
     return torch.log10(feature_sparsity + eps).detach().cpu()
+
+
+def _cleanup_old_checkpoints(
+    checkpoint_path: str, sae_group_name: str, local_checkpoints: int
+) -> None:
+    """
+    Clean up old checkpoints to keep only the most recent ones.
+    
+    Args:
+        checkpoint_path: Base checkpoint directory path
+        sae_group_name: Name of the SAE group for filename matching
+        local_checkpoints: Number of most recent checkpoints to keep
+    """
+    if local_checkpoints <= 0:
+        return
+    
+    # Find all checkpoint files for this SAE group
+    pattern = os.path.join(checkpoint_path, f"*_{sae_group_name}.safetensors")
+    checkpoint_files = glob.glob(pattern)
+    
+    if len(checkpoint_files) <= local_checkpoints - 1:
+        return
+    
+    # Extract checkpoint numbers/names and sort by them
+    checkpoint_info = []
+    for file_path in checkpoint_files:
+        filename = os.path.basename(file_path)
+        # Extract checkpoint name (everything before _{sae_group_name}.safetensors)
+        match = re.match(rf"(.+)_{re.escape(sae_group_name)}\.safetensors$", filename)
+        if match:
+            checkpoint_name = match.group(1)
+            # Try to parse as number for proper sorting, fallback to string
+            try:
+                sort_key = int(checkpoint_name)
+            except ValueError:
+                # For non-numeric names like "final", use a very high number to keep them
+                sort_key = float('inf') if checkpoint_name == "final" else hash(checkpoint_name)
+            checkpoint_info.append((sort_key, file_path, checkpoint_name))
+    
+    # Sort by checkpoint number/name (newest last)
+    checkpoint_info.sort(key=lambda x: x[0])
+    
+    # Keep only the most recent checkpoints
+    files_to_remove = checkpoint_info[:-(local_checkpoints - 1)]
+    
+    for _, file_path, checkpoint_name in files_to_remove:
+        try:
+            # Remove main checkpoint file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"Removed old checkpoint: {file_path}")
+            
+            # Remove corresponding sparsity file
+            sparsity_file = os.path.join(
+                checkpoint_path, 
+                f"{checkpoint_name}_{sae_group_name}_log_feature_sparsity.pt"
+            )
+            if os.path.exists(sparsity_file):
+                os.remove(sparsity_file)
+                print(f"Removed old sparsity file: {sparsity_file}")
+                
+        except Exception as e:
+            print(f"Warning: failed to remove old checkpoint {file_path}: {e}")
