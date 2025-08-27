@@ -23,6 +23,16 @@ run_docker:
 enter:
 	docker exec -it $(CONTAINER_NAME) bash
 
+sheduled_sae:
+	INSTANCE_ID=$$(echo $$(cat ~/.vast_containerlabel) | grep -o '[0-9]\+'); \
+	trap "vastai stop instance $$INSTANCE_ID" EXIT; \
+	make train_sae
+
+train_sae:
+	python train_sae.py 11 16; \
+	python train_sae.py 17 22; \
+	python train_sae.py 23 28
+
 format:
 	poetry run black .
 	poetry run isort .

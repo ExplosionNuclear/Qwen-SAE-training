@@ -1,7 +1,10 @@
-from typing import Any, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer, HookedTransformerConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformer_lens.loading_from_pretrained import OFFICIAL_MODEL_NAMES
+
 
 from sae_training.activations_store import ActivationsStore
 from sae_training.sae_group import SAEGroup
@@ -20,17 +23,15 @@ class LMSparseAutoencoderSessionloader:
         self.cfg = cfg
 
     def load_session(
-        self,
+        self
     ) -> Tuple[HookedTransformer, SAEGroup, ActivationsStore]:
         """
         Loads a session for training a sparse autoencoder on a language model.
         """
-        if isinstance(self.cfg.model, HookedTransformer):
-            model = self.cfg.model
-        else:
-            model = self.get_model(self.cfg.model_name)
+        model = self.get_model(self.cfg.model_name)
 
         model.to(self.cfg.device)
+        self.cfg.d_in = self.cfg.d_in if self.cfg.d_in is not None else model.cfg.d_model
         activations_loader = self.get_activations_loader(self.cfg, model)
         sparse_autoencoder = self.initialize_sparse_autoencoder(self.cfg)
 
@@ -48,10 +49,7 @@ class LMSparseAutoencoderSessionloader:
         # Helper to build model and activations loader without re-initializing SAEGroup
         def _init_model_and_acts(cfg: Any) -> tuple[HookedTransformer, ActivationsStore]:
             loader = cls(cfg)
-            if isinstance(cfg.model, HookedTransformer):
-                model_local = cfg.model
-            else:
-                model_local = loader.get_model(cfg.model_name)
+            model_local = loader.get_model(cfg.model_name)
             model_local.to(cfg.device)
             activations_loader_local = loader.get_activations_loader(cfg, model_local)
             return model_local, activations_loader_local
@@ -81,16 +79,20 @@ class LMSparseAutoencoderSessionloader:
                 "The loaded sparse_autoencoders object is neither an SAE dict nor a SAEGroup"
             )
 
-    def get_model(self, model_name: str):
+    def get_model(self, model_name: str, kwargs: Dict[str, Any] = {}):
         """
         Loads a model from transformer lens
         """
 
         # Todo: add check that model_name is valid
+        
+        print("model_name", model_name)
 
-        model = HookedTransformer.from_pretrained(model_name)
+        if model_name not in OFFICIAL_MODEL_NAMES:
+            return get_custom_hf_model(model_name, kwargs)
+    
+        return HookedTransformer.from_pretrained(model_name)
 
-        return model
 
     def initialize_sparse_autoencoder(self, cfg: Any):
         """
@@ -141,3 +143,41 @@ def shuffle_activations_pairwise(datapath: str, buffer_idx_range: Tuple[int, int
     # Save them back
     torch.save(shuffled_buffer1, f"{datapath}/{buffer_idx1}.pt")
     torch.save(shuffled_buffer2, f"{datapath}/{buffer_idx2}.pt")
+
+
+
+def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedTransformer:
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_name, 
+        **kwargs
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name, 
+    )
+    
+    hf_config = hf_model.config
+    
+    # Создаем конфигурацию для TransformerLens
+    # Ограничиваем размер контекста для экономии памяти
+    max_ctx = min(hf_config.max_position_embeddings, 2048)
+    
+    cfg = HookedTransformerConfig(
+        n_layers=hf_config.num_hidden_layers,
+        d_model=hf_config.hidden_size,
+        d_head=hf_config.hidden_size // hf_config.num_attention_heads,
+        n_heads=hf_config.num_attention_heads,
+        d_mlp=hf_config.intermediate_size,
+        d_vocab=hf_config.vocab_size,
+        n_ctx=max_ctx,  # Ограничиваем размер контекста
+        act_fn=hf_config.hidden_act,  # Llama использует SiLU
+        model_name=model_name,
+        normalization_type="RMS",  # Llama использует RMSNorm
+        device="cpu"
+    )
+    
+    model = HookedTransformer(cfg)
+    
+    model.load_state_dict(hf_model.state_dict(), strict=False)
+    model.set_tokenizer(tokenizer)
+    
+    return model

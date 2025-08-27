@@ -190,8 +190,9 @@ class SAEGroup:
         layers = self.cfg.hook_point_layer
         if not isinstance(layers, list):
             layers = [layers]
+        
         if len(layers) > 1:
-            layer_string = f"{min(layers)-max(layers)}"
+            layer_string = f"{layers[0]}-{layers[-1]}"
         else:
             layer_string = f"{layers[0]}"
         sae_name = f"sae_group_{self.cfg.model_name}_{self.cfg.hook_point.format(layer=layer_string)}_{self.cfg.d_sae}"

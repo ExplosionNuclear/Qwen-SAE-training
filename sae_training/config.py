@@ -1,10 +1,8 @@
 from abc import ABC
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Optional, Union, cast
 
 import torch
-from transformer_lens import HookedTransformer
-
 import wandb
 
 
@@ -17,7 +15,7 @@ class RunnerConfig(ABC):
     # Data Generating Function (Model + Training Distibuion)
     model_name: str = "gelu-2l"
     hook_point: str = "blocks.{layer}.hook_mlp_out"
-    hook_point_layer: int = 0
+    hook_point_layer: Union[int, list[int]] = 0
     hook_point_head_index: Optional[int] = None
     dataset_path: str = "NeelNanda/c4-tokenized-2b"
     is_dataset_tokenized: bool = True
@@ -59,7 +57,6 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
     expansion_factor: int = 4
     from_pretrained_path: Optional[str] = None
     d_sae: Optional[int] = None
-    model: Optional[HookedTransformer] = None
 
     # Training Parameters
     l1_coefficient: float = 1e-3
