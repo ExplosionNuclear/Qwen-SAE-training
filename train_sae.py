@@ -38,7 +38,7 @@ def main():
         store_batch_size=16,    
 
         wandb_project="mats_sae_training_llama32",
-        wandb_log_frequency=1,
+        wandb_log_frequency=10,
         wandb_api_key="a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c",
         wandb_entity="rokser9-lucid-layers",
         eval_every_n_steps=100,
