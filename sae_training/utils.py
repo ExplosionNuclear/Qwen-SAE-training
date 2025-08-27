@@ -43,29 +43,43 @@ class LMSparseAutoencoderSessionloader:
         """
         Loads a session for analysing a pretrained sparse autoencoder group.
         """
-        sparse_autoencoders = SAEGroup.load_from_pretrained(path)
+        loaded = SAEGroup.load_from_pretrained(path)
 
-        if type(sparse_autoencoders) is dict:
-            cfg = sparse_autoencoders["cfg"]
+        # Helper to build model and activations loader without re-initializing SAEGroup
+        def _init_model_and_acts(cfg: Any) -> tuple[HookedTransformer, ActivationsStore]:
+            loader = cls(cfg)
+            if isinstance(cfg.model, HookedTransformer):
+                model_local = cfg.model
+            else:
+                model_local = loader.get_model(cfg.model_name)
+            model_local.to(cfg.device)
+            activations_loader_local = loader.get_activations_loader(cfg, model_local)
+            return model_local, activations_loader_local
+
+        if isinstance(loaded, dict):
+            cfg = loaded["cfg"]
             if cfg_overrides:
                 for k, v in cfg_overrides.items():
                     setattr(cfg, k, v)
-            sparse_autoencoder = SparseAutoencoder(cfg=cfg)
-            sparse_autoencoder.load_state_dict(sparse_autoencoders["state_dict"])
-            model, sparse_autoencoders, activations_loader = cls(cfg).load_session()
-            sparse_autoencoders.autoencoders[0] = sparse_autoencoder
-        elif type(sparse_autoencoders) is SAEGroup:
-            cfg = sparse_autoencoders.cfg
+            # Build a single SAE and wrap it into a lightweight SAEGroup without constructing new ones
+            ae = SparseAutoencoder(cfg=cfg)
+            ae.load_state_dict(loaded["state_dict"])
+            group = SAEGroup.__new__(SAEGroup)
+            group.cfg = cfg
+            group.autoencoders = [ae]
+            model, activations_loader = _init_model_and_acts(cfg)
+            return model, group, activations_loader
+        elif isinstance(loaded, SAEGroup):
+            cfg = loaded.cfg
             if cfg_overrides:
                 for k, v in cfg_overrides.items():
                     setattr(cfg, k, v)
-            model, _, activations_loader = cls(cfg).load_session()
+            model, activations_loader = _init_model_and_acts(cfg)
+            return model, loaded, activations_loader
         else:
             raise ValueError(
                 "The loaded sparse_autoencoders object is neither an SAE dict nor a SAEGroup"
             )
-
-        return model, sparse_autoencoders, activations_loader
 
     def get_model(self, model_name: str):
         """

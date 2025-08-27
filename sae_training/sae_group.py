@@ -4,11 +4,11 @@ import os
 import pickle
 from itertools import product
 from typing import Any, Iterator
+from types import SimpleNamespace
 
 import torch
 
 from sae_training.sparse_autoencoder import SparseAutoencoder
-from sae_training.config import LanguageModelSAERunnerConfig
 from safetensors.torch import load_file as safetensors_load_file
 
 
@@ -29,7 +29,6 @@ class SAEGroup:
             keys, values = zip(*hyperparameters.items())
         else:
             keys, values = (), ([()],)  # Ensure product(*values) yields one combination
-
         # Create all combinations of hyperparameters
         for combination in product(*values):
             params = dict(zip(keys, combination))
@@ -104,8 +103,26 @@ class SAEGroup:
                 except ValueError:
                     continue
 
-            # Build group cfg from first AE inferred cfg
-            inferred_ae_cfgs: list[LanguageModelSAERunnerConfig] = []
+            # Helper to build a lightweight config without triggering heavy __post_init__
+            def _make_lite_cfg(d_in: int, d_sae: int, dtype: torch.dtype, device: str | torch.device):
+                cfg = SimpleNamespace()
+                cfg.d_in = d_in
+                cfg.d_sae = d_sae
+                cfg.dtype = dtype
+                cfg.device = device
+                # Defaults matching LanguageModelSAERunnerConfig
+                cfg.l1_coefficient = 1e-3
+                cfg.lp_norm = 1
+                cfg.use_ghost_grads = False
+                cfg.hook_point = ""
+                cfg.hook_point_head_index = None
+                cfg.model_name = ""
+                cfg.log_to_wandb = False
+                cfg.expansion_factor = d_sae // d_in if d_in else 1
+                return cfg
+
+            # Infer minimal cfgs from tensor shapes
+            inferred_ae_cfgs: list[Any] = []
             for idx in sorted(indices):
                 w_dec = tensors.get(f"{idx}.W_dec")
                 w_enc = tensors.get(f"{idx}.W_enc")
@@ -113,22 +130,15 @@ class SAEGroup:
                     raise ValueError(f"Missing expected tensors for autoencoder index {idx}")
                 d_sae = int(w_dec.shape[0])
                 d_in = int(w_dec.shape[1])
-                
-                cfg = LanguageModelSAERunnerConfig(
-                    d_in=d_in,
-                    d_sae=d_sae,
-                    device="cpu",
-                    dtype=w_dec.dtype,
-                    log_to_wandb=False,
-                    expansion_factor=d_sae // d_in,
-                )
-                inferred_ae_cfgs.append(cfg)
+                inferred_ae_cfgs.append(_make_lite_cfg(d_in, d_sae, w_dec.dtype, "cpu"))
 
-            group_cfg = dataclasses.replace(inferred_ae_cfgs[0])
-            instance = cls(cfg=group_cfg)
+            # Create group instance without running __init__ (avoids expensive autoencoder construction)
+            instance = cls.__new__(cls)
+            # Store a minimal cfg; session code may supply a richer cfg via overrides
+            instance.cfg = inferred_ae_cfgs[0]
             instance.autoencoders = []
 
-            # Reconstruct each SAE and load its tensors
+            # Reconstruct each SAE and load its tensors using the lightweight cfgs
             for idx, cfg in enumerate(inferred_ae_cfgs):
                 ae = SparseAutoencoder(cfg)
                 state_dict_i: dict[str, torch.Tensor] = {}
@@ -146,17 +156,6 @@ class SAEGroup:
             )
 
         return group
-        # # # Ensure the loaded state contains both 'cfg' and 'state_dict'
-        # # if "cfg" not in state_dict or "state_dict" not in state_dict:
-        # #     raise ValueError(
-        # #         "The loaded state dictionary must contain 'cfg' and 'state_dict' keys"
-        # #     )
-
-        # # Create an instance of the class using the loaded configuration
-        # instance = cls(cfg=state_dict["cfg"])
-        # instance.load_state_dict(state_dict["state_dict"])
-
-        # return instance
 
     def save_model(self, path: str):
         """
