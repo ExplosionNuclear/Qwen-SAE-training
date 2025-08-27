@@ -111,7 +111,11 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         )
 
         if self.run_name is None:
-            self.run_name = f"{self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
+            if isinstance(self.hook_point_layer, list):
+                hook_point_layer_str = f"layers-{self.hook_point_layer[0]}-{self.hook_point_layer[-1]}"
+            else:
+                hook_point_layer_str = f"layer-{self.hook_point_layer}"
+            self.run_name = f"{self.d_sae}-{hook_point_layer_str}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
 
         if self.b_dec_init_method not in ["geometric_median", "mean", "zeros"]:
             raise ValueError(
@@ -129,9 +133,7 @@ class LanguageModelSAERunnerConfig(RunnerConfig):
         ).util.generate_id()  # not sure why this type is erroring
         self.checkpoint_path = f"{self.checkpoint_path}/{unique_id}"
 
-        print(
-            f"Run name: {self.d_sae}-L1-{self.l1_coefficient}-LR-{self.lr}-Tokens-{self.total_training_tokens:3.3e}"
-        )
+        print(self.run_name)
         # Print out some useful info:
         n_tokens_per_buffer = (
             self.store_batch_size * self.context_size * self.n_batches_in_buffer

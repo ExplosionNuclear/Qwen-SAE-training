@@ -172,7 +172,8 @@ def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedT
         act_fn=hf_config.hidden_act,  # Llama использует SiLU
         model_name=model_name,
         normalization_type="RMS",  # Llama использует RMSNorm
-        device="cpu"
+        device="cpu", 
+        use_hook_mlp_in=True,
     )
     
     model = HookedTransformer(cfg)

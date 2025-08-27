@@ -29,8 +29,10 @@ sheduled_sae:
 	make train_sae
 
 train_sae:
-	python train_sae.py 17 22; \
-	python train_sae.py 23 28
+	python train_sae.py 0 6 \
+	python train_sae.py 7 12 \
+	python train_sae.py 13 19 \
+	python train_sae.py 20 27 \
 
 format:
 	poetry run black .

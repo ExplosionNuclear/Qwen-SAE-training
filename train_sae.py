@@ -16,7 +16,7 @@ def main():
     
     cfg = LanguageModelSAERunnerConfig(
         model_name="ExplosionNuclear/Llama-2.3-3B-Instruct-special",
-        hook_point="blocks.{layer}.hook_resid_pre",
+        hook_point="blocks.{layer}.hook_mlp_in",  # hook_mlp_in  hook_resid_pre
         hook_point_layer=hook_point_layer,
         dataset_path="ashaba1in/small_openwebtext",
         is_dataset_tokenized=False,
@@ -33,11 +33,11 @@ def main():
         lr_scheduler_name="constantwithwarmup",
         lr_warm_up_steps=1000,
         train_batch_size=4096,         
-        n_batches_in_buffer=180,
+        n_batches_in_buffer=160,
         total_training_tokens=2_000_000,  
         store_batch_size=16,    
 
-        wandb_project="mats_sae_training_llama32",
+        wandb_project="mats_sae_training_llama32_mid_pre",
         wandb_log_frequency=10,
         wandb_api_key="a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c",
         wandb_entity="rokser9-lucid-layers",
@@ -49,7 +49,7 @@ def main():
         checkpoint_path="checkpoints",
 
         push_to_hub=True,
-        hub_repo_id="Lucid-Layers-Inc/llama23-sae-resid_pre",
+        hub_repo_id="Lucid-Layers-Inc/llama23-sae-mid_pre",
         hub_private=False,
 
         # Прочее
