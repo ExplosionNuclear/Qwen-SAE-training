@@ -472,7 +472,6 @@ def _save_checkpoint(
             private=getattr(sae_group.cfg, "hub_private", True),
             exist_ok=True,
         )
-
     
         upload_file(
             path_or_fileobj=path,
