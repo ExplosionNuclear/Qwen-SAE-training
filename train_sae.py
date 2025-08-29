@@ -8,15 +8,19 @@ from sae_training.lm_runner import language_model_sae_runner
 def main():
     load_dotenv()
     hook_point_layer = list(range(5))
+    # ExplosionNuclear/Llama-2.3-3B-Instruct-special-merged-with-19-exp, ExplosionNuclear/Llama-2.3-3B-Instruct-special
+    model_name = "ExplosionNuclear/Llama-2.3-3B-Instruct-special-merged-with-19-exp"  
     if len(sys.argv) >= 3: 
         start, end = int(sys.argv[1]), int(sys.argv[2])
+        
         hook_point_layer = list(range(start, end + 1))
+        model_name = model_name if len(sys.argv) < 4 else sys.argv[3]
     
     print(f"Hook point layer: {hook_point_layer}")
-    
+
     cfg = LanguageModelSAERunnerConfig(
-        model_name="ExplosionNuclear/Llama-2.3-3B-Instruct-special",
-        hook_point="blocks.{layer}.hook_mlp_in",  # hook_mlp_in  hook_resid_pre
+        model_name=model_name,
+        hook_point="blocks.{layer}.hook_resid_pre",  # hook_mlp_in  hook_resid_pre
         hook_point_layer=hook_point_layer,
         dataset_path="ashaba1in/small_openwebtext",
         is_dataset_tokenized=False,
@@ -37,7 +41,7 @@ def main():
         total_training_tokens=2_000_000,  
         store_batch_size=16,    
 
-        wandb_project="mats_sae_training_llama32_mid_pre",
+        wandb_project="mats_sae_training_llama32_resid_pre-19-exp",
         wandb_log_frequency=10,
         wandb_api_key="a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c",
         wandb_entity="rokser9-lucid-layers",
@@ -49,7 +53,7 @@ def main():
         checkpoint_path="checkpoints",
 
         push_to_hub=True,
-        hub_repo_id="Lucid-Layers-Inc/llama23-sae-mid_pre",
+        hub_repo_id="Lucid-Layers-Inc/llama23-sae-resid_pre-19-exp",
         hub_private=False,
 
         # Прочее
