@@ -1,5 +1,21 @@
 <img width="1308" alt="Screenshot 2024-03-21 at 3 08 28 pm" src="https://github.com/jbloomAus/mats_sae_training/assets/69127271/209012ec-a779-4036-b4be-7b7739ea87f6">
 
+# How to launch multi-layer SAE-Training:
+
+* ```make run_docker```
+* Types of training runs
+
+    * Usual RUN
+    
+    ```python train_sae.py 0 6```  where `0` and `6` are the **start** and **end** layers for training SAE modules. Additionally, rewrite lines with the model name and the target hufggingface checkpoint repo if it is necessary. 
+    * Scheduled RUN
+    
+    ```make sheduled_sae```  It trains SAE for all layers for the target model. This run is refined for 1xH200 running 
+
+*To specify the running components as `model_name`, `hf_repo`, `batch_size`, etc, look at the ugly config in `train_sae.py` and change it for your preferences.* 
+
+
+
 # MATS SAE Training
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![build](https://github.com/jbloomAus/mats_sae_training/actions/workflows/tests.yml/badge.svg)](https://github.com/jbloomAus/mats_sae_training/actions/workflows/tests.yml)
