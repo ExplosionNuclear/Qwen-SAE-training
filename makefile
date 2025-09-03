@@ -35,6 +35,12 @@ train_sae:
 	python train_sae.py 19 23 
 	python train_sae.py 24 27 
 
+train_sae_test:
+	python train_sae.py \
+		--config=configs/train.yaml \
+		--hook_point_layer="[7,12]" \
+		--hook_point="blocks.{layer}.hook_resid_pre"
+
 format:
 	poetry run black .
 	poetry run isort .

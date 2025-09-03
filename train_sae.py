@@ -1,70 +1,39 @@
-import torch
 from dotenv import load_dotenv
-import sys
+from typing import Any
+from omegaconf import OmegaConf
+import fire
 
 from sae_training.config import LanguageModelSAERunnerConfig
 from sae_training.lm_runner import language_model_sae_runner
+from sae_training.utils import _parse_dtype, _parse_device, _parse_hook_point_layer, get_hub_repo_id, get_project_name
 
-def main():
-    load_dotenv()
-    hook_point_layer = list(range(5))
-    # ExplosionNuclear/Llama-2.3-3B-Instruct-special-merged-with-19-exp, ExplosionNuclear/Llama-2.3-3B-Instruct-special
-    model_name = "ExplosionNuclear/Llama-2.3-3B-Instruct-special-merged-with-19-exp"  
-    if len(sys.argv) >= 3: 
-        start, end = int(sys.argv[1]), int(sys.argv[2])
-        
-        hook_point_layer = list(range(start, end + 1))
-        model_name = model_name if len(sys.argv) < 4 else sys.argv[3]
-    
-    print(f"Hook point layer: {hook_point_layer}")
 
-    cfg = LanguageModelSAERunnerConfig(
-        model_name=model_name,
-        hook_point="blocks.{layer}.hook_resid_pre",  # hook_mlp_in  hook_resid_pre
-        hook_point_layer=hook_point_layer,
-        dataset_path="ashaba1in/small_openwebtext",
-        is_dataset_tokenized=False,
-        context_size=128,
-        d_in=3072,
+def build_config(config: str = "configs/train.yaml", **overrides: Any) -> LanguageModelSAERunnerConfig:
+    base_cfg = OmegaConf.load(config)
+    override_cfg = OmegaConf.create(overrides) if overrides else OmegaConf.create({})
+    override_cfg.hook_point_layer = _parse_hook_point_layer(override_cfg.hook_point_layer)
+    merged: Any = OmegaConf.merge(base_cfg, override_cfg)
+    merged.hub_repo_id = get_hub_repo_id(merged.model_name, merged.hook_point)
+    merged.wandb_project = get_project_name(merged.model_name, merged.hook_point)
 
-        # SAE
-        expansion_factor=6,  # d_sae = d_in * expansion_factor
-        b_dec_init_method="mean",
+    print(merged.hook_point_layer)
+    # Map dtype and device
+    dtype_str = merged.get("dtype", "float32")
+    device_str = merged.get("device", "auto")
 
-        # Тренировка
-        lr=3e-4,
-        l1_coefficient=1e-3,
-        lr_scheduler_name="constantwithwarmup",
-        lr_warm_up_steps=1000,
-        train_batch_size=4096,         
-        n_batches_in_buffer=160,
-        total_training_tokens=2_000_000,  
-        store_batch_size=16,    
+    data: dict[str, Any] = OmegaConf.to_container(merged, resolve=True)  # type: ignore[assignment]
+    data["dtype"] = _parse_dtype(dtype_str)
+    data["device"] = _parse_device(device_str)
 
-        wandb_project="mats_sae_training_llama32_resid_pre-19-exp",
-        wandb_log_frequency=10,
-        wandb_api_key="a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c",
-        wandb_entity="rokser9-lucid-layers",
-        eval_every_n_steps=100,
+    return LanguageModelSAERunnerConfig(**data)
 
-        logger_backend="clearml",
-        
-        n_checkpoints=4,
-        checkpoint_path="checkpoints",
 
-        push_to_hub=True,
-        hub_repo_id="Lucid-Layers-Inc/llama23-sae-resid_pre-19-exp",
-        hub_private=False,
-
-        # Прочее
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        seed=42,
-        dtype=torch.float32,
-    )
-
+def train(config: str = "configs/train.yaml", **overrides: Any):
+    cfg = build_config(config, **overrides)
     language_model_sae_runner(cfg)
 
 
 if __name__ == "__main__":
-    main()
+    load_dotenv()
+    fire.Fire(train)
     

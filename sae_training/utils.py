@@ -51,7 +51,8 @@ class LMSparseAutoencoderSessionloader:
             loader = cls(cfg)
             model_local = loader.get_model(cfg.model_name)
             model_local.to(cfg.device)
-            activations_loader_local = loader.get_activations_loader(cfg, model_local)
+            activations_loader_local = loader.get_activations_loader(
+                cfg, model_local)
             return model_local, activations_loader_local
 
         if isinstance(loaded, dict):
@@ -85,14 +86,13 @@ class LMSparseAutoencoderSessionloader:
         """
 
         # Todo: add check that model_name is valid
-        
+
         print("model_name", model_name)
 
         if model_name not in OFFICIAL_MODEL_NAMES:
             return get_custom_hf_model(model_name, kwargs)
-    
-        return HookedTransformer.from_pretrained(model_name)
 
+        return HookedTransformer.from_pretrained(model_name)
 
     def initialize_sparse_autoencoder(self, cfg: Any):
         """
@@ -124,8 +124,10 @@ def shuffle_activations_pairwise(datapath: str, buffer_idx_range: Tuple[int, int
         buffer_idx_range[0] < buffer_idx_range[1] - 1
     ), "buffer_idx_range[0] must be smaller than buffer_idx_range[1] by at least 1"
 
-    buffer_idx1 = torch.randint(buffer_idx_range[0], buffer_idx_range[1], (1,)).item()
-    buffer_idx2 = torch.randint(buffer_idx_range[0], buffer_idx_range[1], (1,)).item()
+    buffer_idx1 = torch.randint(
+        buffer_idx_range[0], buffer_idx_range[1], (1,)).item()
+    buffer_idx2 = torch.randint(
+        buffer_idx_range[0], buffer_idx_range[1], (1,)).item()
     while buffer_idx1 == buffer_idx2:  # Make sure they're not the same
         buffer_idx2 = torch.randint(
             buffer_idx_range[0], buffer_idx_range[1], (1,)
@@ -138,29 +140,28 @@ def shuffle_activations_pairwise(datapath: str, buffer_idx_range: Tuple[int, int
     # Shuffle them
     joint_buffer = joint_buffer[torch.randperm(joint_buffer.shape[0])]
     shuffled_buffer1 = joint_buffer[: buffer1.shape[0]]
-    shuffled_buffer2 = joint_buffer[buffer1.shape[0] :]
+    shuffled_buffer2 = joint_buffer[buffer1.shape[0]:]
 
     # Save them back
     torch.save(shuffled_buffer1, f"{datapath}/{buffer_idx1}.pt")
     torch.save(shuffled_buffer2, f"{datapath}/{buffer_idx2}.pt")
 
 
-
 def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedTransformer:
     hf_model = AutoModelForCausalLM.from_pretrained(
-        model_name, 
+        model_name,
         **kwargs
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        model_name, 
+        model_name,
     )
-    
+
     hf_config = hf_model.config
-    
+
     # Создаем конфигурацию для TransformerLens
     # Ограничиваем размер контекста для экономии памяти
     max_ctx = min(hf_config.max_position_embeddings, 2048)
-    
+
     cfg = HookedTransformerConfig(
         n_layers=hf_config.num_hidden_layers,
         d_model=hf_config.hidden_size,
@@ -172,13 +173,49 @@ def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedT
         act_fn=hf_config.hidden_act,  # Llama использует SiLU
         model_name=model_name,
         normalization_type="RMS",  # Llama использует RMSNorm
-        device="cpu", 
+        device="cpu",
         use_hook_mlp_in=True,
     )
-    
+
     model = HookedTransformer(cfg)
-    
+
     model.load_state_dict(hf_model.state_dict(), strict=False)
     model.set_tokenizer(tokenizer)
-    
+
     return model
+
+
+def _parse_dtype(dtype_str: str) -> torch.dtype:
+    mapping = {
+        "float32": torch.float32,
+        "float": torch.float32,
+        "fp32": torch.float32,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+        "float16": torch.float16,
+        "half": torch.float16,
+        "fp16": torch.float16,
+    }
+    return mapping.get(dtype_str.lower(), torch.float32)
+
+
+def _parse_device(device_str: str) -> str:
+    if device_str == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return device_str
+
+
+def _parse_hook_point_layer(hook_point_layer: Any) -> list[int]:
+    hook_point_layer = list(hook_point_layer)
+    if isinstance(hook_point_layer, list):
+        return list(range(int(hook_point_layer[0]), int(hook_point_layer[-1]) + 1))
+    else:
+        return [hook_point_layer]
+
+
+def get_hub_repo_id(model_name: str, hook_point: str) -> str:
+    return f"Lucid-Layers-Inc/{model_name.split('/')[-1]}-{hook_point.split('.')[-1]}-SAE"
+
+
+def get_project_name(model_name: str, hook_point: str) -> str:
+    return f"mats_sae_training_{model_name.split('/')[-1]}_{hook_point.split('.')[-1]}-SAE"

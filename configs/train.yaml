@@ -1,0 +1,43 @@
+model_name: ExplosionNuclear/Llama-2.3-3B-Instruct-special-merged-with-19-exp
+hook_point: blocks.{layer}.hook_resid_pre
+hook_point_layer: [0, 1, 2, 3, 4]
+dataset_path: ashaba1in/small_openwebtext
+is_dataset_tokenized: false
+context_size: 128
+d_in: 3072
+
+# SAE
+expansion_factor: 10
+b_dec_init_method: mean
+
+# Training
+lr: 3e-4
+l1_coefficient: 1e-3
+lr_scheduler_name: constantwithwarmup
+lr_warm_up_steps: 1000
+train_batch_size: 2096
+n_batches_in_buffer: 32
+total_training_tokens: 20000000
+store_batch_size: 16
+
+wandb_project: mats_sae_training_llama32_resid_pre-19-exp
+wandb_log_frequency: 10
+wandb_api_key: a89e0ceef33f3c2cc4b7d9d9d5795fa238b4a60c
+wandb_entity: rokser9-lucid-layers
+eval_every_n_steps: 1000
+
+logger_backend: clearml
+
+n_checkpoints: 0
+checkpoint_path: checkpoints
+
+push_to_hub: true
+hub_repo_id: Lucid-Layers-Inc/llama23-sae-resid_pre-19-exp
+hub_private: false
+
+# Other
+device: auto  # auto|cuda|cpu
+seed: 42
+dtype: float32
+
+

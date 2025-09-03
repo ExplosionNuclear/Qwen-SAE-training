@@ -11,8 +11,8 @@ from tqdm import tqdm
 from transformer_lens import HookedTransformer
 
 import wandb
-from huggingface_hub import HfApi, create_repo, upload_file
-from clearml import Task
+from huggingface_hub import create_repo, upload_file
+# from clearml import Task  # Commented out as not used
 from clearml import Logger as ClearMLLogger
 
 from sae_training.activations_store import ActivationsStore
@@ -53,8 +53,10 @@ def train_sae_on_language_model(
     activation_store: ActivationsStore,
     batch_size: int = 1024,
     n_checkpoints: int = 0,
-    feature_sampling_window: int = 1000,  # how many training steps between resampling the features / considiring neurons dead
-    dead_feature_threshold: float = 1e-8,  # how infrequently a feature has to be active to be considered dead
+    # how many training steps between resampling the features / considiring neurons dead
+    feature_sampling_window: int = 1000,
+    # how infrequently a feature has to be active to be considered dead
+    dead_feature_threshold: float = 1e-8,
     use_wandb: bool = False,
     wandb_log_frequency: int = 50,
 ) -> SAEGroup:
@@ -79,7 +81,8 @@ def train_sae_group_on_language_model(
     activation_store: ActivationsStore,
     batch_size: int = 1024,
     n_checkpoints: int = 0,
-    feature_sampling_window: int = 1000,  # how many training steps between resampling the features / considiring neurons dead
+    # how many training steps between resampling the features / considiring neurons dead
+    feature_sampling_window: int = 1000,
     use_wandb: bool = False,
     wandb_log_frequency: int = 50,
 ) -> TrainSAEGroupOutput:
@@ -91,7 +94,8 @@ def train_sae_group_on_language_model(
     checkpoint_thresholds = []
     if n_checkpoints > 0:
         checkpoint_thresholds = list(
-            range(0, total_training_tokens, total_training_tokens // n_checkpoints)
+            range(0, total_training_tokens,
+                  total_training_tokens // n_checkpoints)
         )[1:]
 
     all_layers = sae_group.cfg.hook_point_layer
@@ -114,7 +118,8 @@ def train_sae_group_on_language_model(
         l1_losses: list[torch.Tensor] = []
 
         for (sparse_autoencoder, ctx) in zip(sae_group, train_contexts):
-            wandb_suffix = _wandb_log_suffix(sae_group.cfg, sparse_autoencoder.cfg)
+            wandb_suffix = _wandb_log_suffix(
+                sae_group.cfg, sparse_autoencoder.cfg)
             step_output = _train_step(
                 sparse_autoencoder=sparse_autoencoder,
                 layer_acts=layer_acts,
@@ -128,10 +133,10 @@ def train_sae_group_on_language_model(
             )
             mse_losses.append(step_output.mse_loss)
             l1_losses.append(step_output.l1_loss)
-            
+
             if (n_training_steps + 1) % wandb_log_frequency == 0:
                 with torch.no_grad():
-                    
+
                     output_dict = _build_train_step_log_dict(
                         sparse_autoencoder,
                         step_output,
@@ -149,7 +154,7 @@ def train_sae_group_on_language_model(
                             output_dict,
                             step=n_training_steps,
                         )
-            
+
             if (n_training_steps + 1) % sae_group.cfg.eval_every_n_steps == 0:
                 sparse_autoencoder.eval()
                 run_evals(
@@ -255,7 +260,8 @@ def _init_sae_group_b_decs(
         hyperparams = sae.cfg
         sae_layer_id = all_layers.index(hyperparams.hook_point_layer)
         if hyperparams.b_dec_init_method == "geometric_median":
-            layer_acts = activation_store.storage_buffer.detach()[:, sae_layer_id, :]
+            layer_acts = activation_store.storage_buffer.detach()[
+                :, sae_layer_id, :]
             # get geometric median of the activations if we're using those.
             if sae_layer_id not in geometric_medians:
                 median = compute_geometric_median(
@@ -263,7 +269,8 @@ def _init_sae_group_b_decs(
                     maxiter=100,
                 ).median
                 geometric_medians[sae_layer_id] = median
-            sae.initialize_b_dec_with_precalculated(geometric_medians[sae_layer_id])
+            sae.initialize_b_dec_with_precalculated(
+                geometric_medians[sae_layer_id])
         elif hyperparams.b_dec_init_method == "mean":
             layer_acts = activation_store.storage_buffer.detach().cpu()[
                 :, sae_layer_id, :
@@ -287,7 +294,8 @@ def _train_step(
     sparse_autoencoder: SparseAutoencoder,
     layer_acts: torch.Tensor,
     ctx: SAETrainContext,
-    feature_sampling_window: int,  # how many training steps between resampling the features / considiring neurons dead
+    # how many training steps between resampling the features / considiring neurons dead
+    feature_sampling_window: int,
     use_wandb: bool,
     n_training_steps: int,
     all_layers: list[int],
@@ -322,7 +330,6 @@ def _train_step(
                 )
             elif sparse_autoencoder.cfg.logger_backend == "clearml":
                 _log_dict_to_clearml(metrics_dict, step=n_training_steps)
-
 
         ctx.act_freq_scores = torch.zeros(
             sparse_autoencoder.cfg.d_sae, device=sparse_autoencoder.cfg.device
@@ -446,22 +453,46 @@ def _save_checkpoint(
     # Clean up old checkpoints before saving new one
     if hasattr(sae_group.cfg, 'local_checkpoints') and sae_group.cfg.local_checkpoints > 0:
         _cleanup_old_checkpoints(
-            sae_group.cfg.checkpoint_path, 
-            sae_group.get_name(), 
+            sae_group.cfg.checkpoint_path,
             sae_group.cfg.local_checkpoints
         )
-    
-    path = (
-        f"{sae_group.cfg.checkpoint_path}/{checkpoint_name}_{sae_group.get_name()}.safetensors"
-    )
+
+    # Create checkpoint folder
+    checkpoint_folder = f"{sae_group.cfg.checkpoint_path}/{checkpoint_name}_{sae_group.get_name()}"
+    os.makedirs(checkpoint_folder, exist_ok=True)
+
+    # Path for the main model file (used for compatibility)
+    path = f"{checkpoint_folder}/model.safetensors"
+
     for sae in sae_group:
         sae.set_decoder_norm_to_unit_norm()
-    sae_group.save_model(path)
-    log_feature_sparsity_path = f"{sae_group.cfg.checkpoint_path}/{checkpoint_name}_{sae_group.get_name()}_log_feature_sparsity.pt"
-    log_feature_sparsities = [
-        _log_feature_sparsity(ctx.feature_sparsity) for ctx in train_contexts
-    ]
-    torch.save(log_feature_sparsities, log_feature_sparsity_path)
+
+    # Save model - this now returns a list of saved file paths in the checkpoint folder
+    saved_model_paths = sae_group.save_model(path)
+
+    # Save log feature sparsity for each layer separately in the same folder
+    log_feature_sparsity_paths = []
+    log_feature_sparsities = []
+
+    for ae, ctx in zip(sae_group.autoencoders, train_contexts):
+        layer = ae.cfg.hook_point_layer
+        hook_point = ae.cfg.hook_point.split('.')[-1]
+        model_name = ae.cfg.model_name.replace('/', '-')
+
+        # Create individual log feature sparsity file path in checkpoint folder
+        log_sparsity_path = f"{checkpoint_folder}/{model_name}_layer-{layer}.{hook_point}_{ae.cfg.d_sae}_log_feature_sparsity.pt"
+
+        # Save individual log feature sparsity
+        log_sparsity = _log_feature_sparsity(ctx.feature_sparsity)
+        torch.save(log_sparsity, log_sparsity_path)
+
+        log_feature_sparsity_paths.append(log_sparsity_path)
+        log_feature_sparsities.append(log_sparsity)
+
+    # Use the first model path as the main path for compatibility
+    main_path = saved_model_paths[0] if saved_model_paths else path
+    main_log_path = log_feature_sparsity_paths[
+        0] if log_feature_sparsities else f"{checkpoint_folder}/log_feature_sparsity.pt"
 
     # Optionally push checkpoint to Hugging Face Hub
     if getattr(sae_group.cfg, "push_to_hub", False) and getattr(
@@ -472,19 +503,24 @@ def _save_checkpoint(
             private=getattr(sae_group.cfg, "hub_private", True),
             exist_ok=True,
         )
-    
-        upload_file(
-            path_or_fileobj=path,
-            path_in_repo=os.path.basename(path),
-            repo_id=sae_group.cfg.hub_repo_id,
-        )
-        upload_file(
-            path_or_fileobj=log_feature_sparsity_path,
-            path_in_repo=os.path.basename(log_feature_sparsity_path),
-            repo_id=sae_group.cfg.hub_repo_id,
-        )
-        
-    return SaveCheckpointOutput(path, log_feature_sparsity_path, log_feature_sparsities)
+
+        # Upload all saved model files
+        for model_path in saved_model_paths:
+            upload_file(
+                path_or_fileobj=model_path,
+                path_in_repo=os.path.basename(model_path),
+                repo_id=sae_group.cfg.hub_repo_id,
+            )
+
+        # Upload all log feature sparsity files
+        for log_path in log_feature_sparsity_paths:
+            upload_file(
+                path_or_fileobj=log_path,
+                path_in_repo=os.path.basename(log_path),
+                repo_id=sae_group.cfg.hub_repo_id,
+            )
+
+    return SaveCheckpointOutput(main_path, main_log_path, log_feature_sparsities)
 
 
 def _log_feature_sparsity(
@@ -494,63 +530,60 @@ def _log_feature_sparsity(
 
 
 def _cleanup_old_checkpoints(
-    checkpoint_path: str, sae_group_name: str, local_checkpoints: int
+    checkpoint_path: str, local_checkpoints: int
 ) -> None:
     """
-    Clean up old checkpoints to keep only the most recent ones.
-    
+    Clean up old checkpoint folders to keep only the most recent ones.
+    Much simpler approach - just remove entire folders.
+
     Args:
         checkpoint_path: Base checkpoint directory path
-        sae_group_name: Name of the SAE group for filename matching
         local_checkpoints: Number of most recent checkpoints to keep
     """
     if local_checkpoints <= 0:
         return
-    
-    # Find all checkpoint files for this SAE group
-    pattern = os.path.join(checkpoint_path, f"*_{sae_group_name}.safetensors")
-    checkpoint_files = glob.glob(pattern)
-    
-    if len(checkpoint_files) <= local_checkpoints - 1:
+
+    if not os.path.exists(checkpoint_path):
         return
-    
-    # Extract checkpoint numbers/names and sort by them
+
+    # Find all checkpoint folders
+    checkpoint_folders = []
+    for item in os.listdir(checkpoint_path):
+        item_path = os.path.join(checkpoint_path, item)
+        if os.path.isdir(item_path):
+            # Extract checkpoint name from folder name (everything before the last underscore+sae_group_name)
+            # Format: {checkpoint_name}_{sae_group_name}
+            parts = item.split('_')
+            if len(parts) >= 2:
+                # Try to get checkpoint name (first part before sae_group info)
+                checkpoint_name = parts[0]
+                checkpoint_folders.append((item_path, checkpoint_name))
+
+    if len(checkpoint_folders) <= local_checkpoints - 1:
+        return
+
+    # Sort checkpoint folders by checkpoint name/number
     checkpoint_info = []
-    for file_path in checkpoint_files:
-        filename = os.path.basename(file_path)
-        # Extract checkpoint name (everything before _{sae_group_name}.safetensors)
-        match = re.match(rf"(.+)_{re.escape(sae_group_name)}\.safetensors$", filename)
-        if match:
-            checkpoint_name = match.group(1)
-            # Try to parse as number for proper sorting, fallback to string
-            try:
-                sort_key = int(checkpoint_name)
-            except ValueError:
-                # For non-numeric names like "final", use a very high number to keep them
-                sort_key = float('inf') if checkpoint_name == "final" else hash(checkpoint_name)
-            checkpoint_info.append((sort_key, file_path, checkpoint_name))
-    
+    for folder_path, checkpoint_name in checkpoint_folders:
+        try:
+            sort_key = int(checkpoint_name)
+        except ValueError:
+            # For non-numeric names like "final", use a very high number to keep them
+            sort_key = float('inf') if checkpoint_name == "final" else hash(
+                checkpoint_name)
+        checkpoint_info.append((sort_key, folder_path, checkpoint_name))
+
     # Sort by checkpoint number/name (newest last)
     checkpoint_info.sort(key=lambda x: x[0])
-    
+
     # Keep only the most recent checkpoints
-    files_to_remove = checkpoint_info[:-(local_checkpoints - 1)]
-    
-    for _, file_path, checkpoint_name in files_to_remove:
+    folders_to_remove = checkpoint_info[:-(local_checkpoints - 1)]
+
+    for _, folder_path, checkpoint_name in folders_to_remove:
         try:
-            # Remove main checkpoint file
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                print(f"Removed old checkpoint: {file_path}")
-            
-            # Remove corresponding sparsity file
-            sparsity_file = os.path.join(
-                checkpoint_path, 
-                f"{checkpoint_name}_{sae_group_name}_log_feature_sparsity.pt"
-            )
-            if os.path.exists(sparsity_file):
-                os.remove(sparsity_file)
-                print(f"Removed old sparsity file: {sparsity_file}")
-                
+            import shutil
+            shutil.rmtree(folder_path)
+            print(f"Removed old checkpoint folder: {folder_path}")
         except Exception as e:
-            print(f"Warning: failed to remove old checkpoint {file_path}: {e}")
+            print(
+                f"Warning: failed to remove old checkpoint folder {folder_path}: {e}")

@@ -18,17 +18,20 @@ class SAEGroup:
 
     def __init__(self, cfg: Any):
         self.cfg = cfg
-        self.autoencoders = []  # This will store tuples of (instance, hyperparameters)
+        # This will store tuples of (instance, hyperparameters)
+        self.autoencoders = []
         self._init_autoencoders(cfg)
 
     def _init_autoencoders(self, cfg: Any):
         # Dynamically get all combinations of hyperparameters from cfg
         # Extract all hyperparameter lists from cfg
-        hyperparameters = {k: v for k, v in vars(cfg).items() if isinstance(v, list)}
+        hyperparameters = {k: v for k, v in vars(
+            cfg).items() if isinstance(v, list)}
         if len(hyperparameters) > 0:
             keys, values = zip(*hyperparameters.items())
         else:
-            keys, values = (), ([()],)  # Ensure product(*values) yields one combination
+            # Ensure product(*values) yields one combination
+            keys, values = (), ([()],)
         # Create all combinations of hyperparameters
         for combination in product(*values):
             params = dict(zip(keys, combination))
@@ -74,7 +77,8 @@ class SAEGroup:
                 else:
                     group = torch.load(path)
             except Exception as e:
-                raise IOError(f"Error loading the state dictionary from .pt file: {e}")
+                raise IOError(
+                    f"Error loading the state dictionary from .pt file: {e}")
 
         elif path.endswith(".pkl.gz"):
             try:
@@ -89,7 +93,8 @@ class SAEGroup:
                 with open(path, "rb") as f:
                     group = pickle.load(f)
             except Exception as e:
-                raise IOError(f"Error loading the state dictionary from .pkl file: {e}")
+                raise IOError(
+                    f"Error loading the state dictionary from .pkl file: {e}")
         elif path.endswith(".safetensors"):
             tensors = safetensors_load_file(path, device="cpu")
 
@@ -127,10 +132,12 @@ class SAEGroup:
                 w_dec = tensors.get(f"{idx}.W_dec")
                 w_enc = tensors.get(f"{idx}.W_enc")
                 if w_dec is None or w_enc is None:
-                    raise ValueError(f"Missing expected tensors for autoencoder index {idx}")
+                    raise ValueError(
+                        f"Missing expected tensors for autoencoder index {idx}")
                 d_sae = int(w_dec.shape[0])
                 d_in = int(w_dec.shape[1])
-                inferred_ae_cfgs.append(_make_lite_cfg(d_in, d_sae, w_dec.dtype, "cpu"))
+                inferred_ae_cfgs.append(_make_lite_cfg(
+                    d_in, d_sae, w_dec.dtype, "cpu"))
 
             # Create group instance without running __init__ (avoids expensive autoencoder construction)
             instance = cls.__new__(cls)
@@ -157,40 +164,82 @@ class SAEGroup:
 
         return group
 
-    def save_model(self, path: str):
+    def save_model(self, path: str) -> list[str]:
         """
-        Basic save function for the model. Saves the model's state_dict and the config used to train it.
+        Basic save function for the model. Saves each autoencoder in a separate file.
         """
 
         # check if path exists
         folder = os.path.dirname(path)
         os.makedirs(folder, exist_ok=True)
 
+        saved_files = []
+
         if path.endswith(".safetensors"):
-            # Export all autoencoder parameters into a flat tensor dict
-            tensors: dict[str, torch.Tensor] = {}
-            for idx, ae in enumerate(self.autoencoders):
-                for k, v in ae.state_dict().items():
-                    tensors[f"{idx}.{k}"] = v.detach().cpu()
             from safetensors.torch import save_file
-            save_file(tensors, path)
+            # Save each autoencoder in a separate file
+            for ae in self.autoencoders:
+                # Create layer-specific filename
+                layer = ae.cfg.hook_point_layer
+                # Get the last part (e.g., 'hook_resid_pre')
+                hook_point = ae.cfg.hook_point.split('.')[-1]
+                # Replace slashes for filesystem compatibility
+                model_name = ae.cfg.model_name.replace('/', '-')
+
+                # Generate individual file path
+                individual_path = os.path.join(
+                    folder, f"{model_name}_layer-{layer}.{hook_point}_{ae.cfg.d_sae}.safetensors")
+
+                # Save individual autoencoder
+                tensors = {k: v.detach().cpu()
+                           for k, v in ae.state_dict().items()}
+                save_file(tensors, individual_path)
+                saved_files.append(individual_path)
+
         elif path.endswith(".pt"):
-            torch.save(self, path)
+            # Save each autoencoder in a separate .pt file
+            for ae in self.autoencoders:
+                layer = ae.cfg.hook_point_layer
+                hook_point = ae.cfg.hook_point.split('.')[-1]
+                model_name = ae.cfg.model_name.replace('/', '-')
+
+                individual_path = os.path.join(
+                    folder, f"{model_name}_layer-{layer}.{hook_point}_{ae.cfg.d_sae}.pt")
+
+                torch.save(
+                    {"cfg": ae.cfg, "state_dict": ae.state_dict()}, individual_path)
+                saved_files.append(individual_path)
+
         elif path.endswith("pkl.gz"):
-            with gzip.open(path, "wb") as f:
-                pickle.dump(self, f)
+            # Save each autoencoder in a separate .pkl.gz file
+            for ae in self.autoencoders:
+                layer = ae.cfg.hook_point_layer
+                hook_point = ae.cfg.hook_point.split('.')[-1]
+                model_name = ae.cfg.model_name.replace('/', '-')
+
+                individual_path = os.path.join(
+                    folder, f"{model_name}_layer-{layer}.{hook_point}_{ae.cfg.d_sae}.pkl.gz")
+
+                with gzip.open(individual_path, "wb") as f:
+                    pickle.dump(
+                        {"cfg": ae.cfg, "state_dict": ae.state_dict()}, f)
+                saved_files.append(individual_path)
         else:
             raise ValueError(
                 f"Unexpected file extension: {path}, supported extensions are .safetensors, .pt and .pkl.gz"
             )
 
-        print(f"Saved model to {path}")
+        # Print all saved files
+        for saved_file in saved_files:
+            print(f"Saved model to {saved_file}")
+
+        return saved_files
 
     def get_name(self):
         layers = self.cfg.hook_point_layer
         if not isinstance(layers, list):
             layers = [layers]
-        
+
         if len(layers) > 1:
             layer_string = f"{layers[0]}-{layers[-1]}"
         else:
