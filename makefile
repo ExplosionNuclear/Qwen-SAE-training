@@ -1,4 +1,4 @@
-IMAGE_NAME := akkadeeemikk/mats
+IMAGE_NAME := akkadeeemikk/mats_sae_training
 CONTAINER_NAME := mats_sae
 
 build_mats:
