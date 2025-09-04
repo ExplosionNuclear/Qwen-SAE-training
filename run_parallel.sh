@@ -10,6 +10,7 @@ MODELS=(
 HOOK_POINTS=(
     "blocks.{layer}.hook_resid_pre"
     "blocks.{layer}.hook_mlp_in"
+    "blocks.{layer}.hook_resid_mid"
 )
 
 # Группы слоев (от 0 до 27 с шагом 6)

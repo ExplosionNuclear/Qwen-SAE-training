@@ -12,7 +12,7 @@ b_dec_init_method: mean
 
 # Training
 lr: 3e-4
-l1_coefficient: 1e-3
+l1_coefficient: 5e-6
 lr_scheduler_name: constantwithwarmup
 lr_warm_up_steps: 1000
 train_batch_size: 2096

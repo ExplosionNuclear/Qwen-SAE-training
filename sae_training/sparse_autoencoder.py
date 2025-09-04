@@ -23,6 +23,7 @@ class ForwardOutput(NamedTuple):
     mse_loss: torch.Tensor
     l1_loss: torch.Tensor
     ghost_grad_loss: torch.Tensor
+    real_mse_loss: torch.Tensor = torch.tensor(0.0)
 
 
 class SparseAutoencoder(HookedRootModule):
@@ -154,6 +155,7 @@ class SparseAutoencoder(HookedRootModule):
             mse_loss=mse_loss,
             l1_loss=l1_loss,
             ghost_grad_loss=mse_loss_ghost_resid,
+            real_mse_loss=torch.mean((sae_out - x.float()) ** 2),
         )
 
     @torch.no_grad()

@@ -5,7 +5,7 @@
 
   "[python]": {
     "editor.defaultFormatter": "ms-python.python",
-    "editor.formatOnSave": true,
+    "editor.formatOnSave": false,
     "editor.codeActionsOnSave": {
       "source.organizeImports": "explicit"
     }

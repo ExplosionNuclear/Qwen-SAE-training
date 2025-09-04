@@ -8,7 +8,7 @@ stop:
 	docker stop $(CONTAINER_NAME)
 
 jupyter:
-	jupyter lab --allow-root --ip=0.0.0.0 --port=8888 --no-browser --NotebookApp.token=mats
+	jupyter lab --allow-root --ip=0.0.0.0 --port=8895 --no-browser --NotebookApp.token=mats --ServerApp.contents_manager_class=jupyter_server.services.contents.filemanager.FileContentsManager
 
 run_docker:
 	docker run -d -it --rm \
@@ -23,17 +23,10 @@ run_docker:
 enter:
 	docker exec -it $(CONTAINER_NAME) bash
 
-sheduled_sae:
+sheduled_sae_test:
 	INSTANCE_ID=$$(echo $$(cat ~/.vast_containerlabel) | grep -o '[0-9]\+'); \
 	trap "vastai stop instance $$INSTANCE_ID" EXIT; \
-	make train_sae
-
-train_sae:
-	python train_sae.py 0 6 
-	python train_sae.py 7 12 
-	python train_sae.py 13 18 
-	python train_sae.py 19 23 
-	python train_sae.py 24 27 
+	make train_sae_test
 
 train_sae_test:
 	python train_sae.py \
@@ -41,24 +34,30 @@ train_sae_test:
 		--hook_point_layer="[7,12]" \
 		--hook_point="blocks.{layer}.hook_resid_pre"
 
-format:
-	poetry run black .
-	poetry run isort .
+train_all_saes3:
+	./run_parallel_queue.sh
 
-check-format:
-	poetry run flake8 .
-	poetry run black --check .
-	poetry run isort --check-only --diff .
+enter_conda:
+	conda activate ilya 
 
-check-type:
-	poetry run pyright .
+# format:
+# 	poetry run black .
+# 	poetry run isort .
 
-test:
-	make unit-test
-	make acceptance-test
+# check-format:
+# 	poetry run flake8 .
+# 	poetry run black --check .
+# 	poetry run isort --check-only --diff .
 
-unit-test:
-	poetry run pytest -v --cov=sae_training/ --cov-report=term-missing --cov-branch tests/unit
+# check-type:
+# 	poetry run pyright .
 
-acceptance-test:
-	poetry run pytest -v --cov=sae_training/ --cov-report=term-missing --cov-branch tests/acceptance
+# test:
+# 	make unit-test
+# 	make acceptance-test
+
+# unit-test:
+# 	poetry run pytest -v --cov=sae_training/ --cov-report=term-missing --cov-branch tests/unit
+
+# acceptance-test:
+# 	poetry run pytest -v --cov=sae_training/ --cov-report=term-missing --cov-branch tests/acceptance

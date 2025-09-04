@@ -12,7 +12,6 @@ from transformer_lens import HookedTransformer
 
 import wandb
 from huggingface_hub import create_repo, upload_file
-# from clearml import Task  # Commented out as not used
 from clearml import Logger as ClearMLLogger
 
 from sae_training.activations_store import ActivationsStore
@@ -288,6 +287,7 @@ class TrainStepOutput:
     l1_loss: torch.Tensor
     ghost_grad_loss: torch.Tensor
     ghost_grad_neuron_mask: torch.Tensor
+    real_mse_loss: torch.Tensor = torch.tensor(0.0)
 
 
 def _train_step(
@@ -348,6 +348,7 @@ def _train_step(
         mse_loss,
         l1_loss,
         ghost_grad_loss,
+        real_mse_loss,
     ) = sparse_autoencoder(
         sae_in,
         ghost_grad_neuron_mask,
@@ -376,6 +377,7 @@ def _train_step(
         l1_loss=l1_loss,
         ghost_grad_loss=ghost_grad_loss,
         ghost_grad_neuron_mask=ghost_grad_neuron_mask,
+        real_mse_loss=real_mse_loss,
     )
 
 
@@ -394,6 +396,7 @@ def _build_train_step_log_dict(
     ghost_grad_loss = output.ghost_grad_loss
     loss = output.loss
     ghost_grad_neuron_mask = output.ghost_grad_neuron_mask
+    real_mse_loss = output.real_mse_loss
 
     # metrics for currents acts
     l0 = (feature_acts > 0).float().sum(-1).mean()
@@ -414,6 +417,7 @@ def _build_train_step_log_dict(
         f"metrics/explained_variance{wandb_suffix}": explained_variance.mean().item(),
         f"metrics/explained_variance_std{wandb_suffix}": explained_variance.std().item(),
         f"metrics/l0{wandb_suffix}": l0.item(),
+        f"metrics/real_mse_loss{wandb_suffix}": real_mse_loss.item(),
         # sparsity
         f"sparsity/mean_passes_since_fired{wandb_suffix}": ctx.n_forward_passes_since_fired.mean().item(),
         f"sparsity/dead_features{wandb_suffix}": ghost_grad_neuron_mask.sum().item(),
