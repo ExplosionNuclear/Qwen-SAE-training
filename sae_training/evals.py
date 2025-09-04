@@ -56,7 +56,7 @@ def run_evals(
     else:
         original_act = cache[sparse_autoencoder.cfg.hook_point]
 
-    sae_out, _feature_acts, _, _, _, _ = sparse_autoencoder(original_act)
+    sae_out, _feature_acts, *_ = sparse_autoencoder(original_act)
     patterns_original = (
         cache[get_act_name("pattern", hook_point_layer)][:, hook_point_head_index]
         .detach()
