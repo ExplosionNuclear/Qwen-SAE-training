@@ -28,18 +28,18 @@ def run_evals(
     ### Evals
     eval_tokens = activation_store.get_batch_tokens()
 
-    # Get Reconstruction Score
-    losses_df = recons_loss_batched(
-        sparse_autoencoder,
-        model,
-        activation_store,
-        n_batches=10,
-    )
+    # # Get Reconstruction Score
+    # losses_df = recons_loss_batched(
+    #     sparse_autoencoder,
+    #     model,
+    #     activation_store,
+    #     n_batches=10,
+    # )
 
-    recons_score = losses_df["score"].mean()
-    ntp_loss = losses_df["loss"].mean()
-    recons_loss = losses_df["recons_loss"].mean()
-    zero_abl_loss = losses_df["zero_abl_loss"].mean()
+    # recons_score = losses_df["score"].mean()
+    # ntp_loss = losses_df["loss"].mean()
+    # recons_loss = losses_df["recons_loss"].mean()
+    # zero_abl_loss = losses_df["zero_abl_loss"].mean()
 
     # get cache
     _, cache = model.run_with_cache(
@@ -70,18 +70,20 @@ def run_evals(
     l2_norm_in = torch.norm(original_act, dim=-1)
     l2_norm_out = torch.norm(sae_out, dim=-1)
     l2_norm_ratio = l2_norm_out / l2_norm_in
+    l2_normalized_error = torch.norm(original_act - sae_out,dim=-1).mean()
 
     metrics = {
         f"metrics/l2_norm{suffix}": l2_norm_out.mean().item(),
         f"metrics/l2_ratio{suffix}": l2_norm_ratio.mean().item(),
-        f"metrics/CE_loss_score{suffix}": recons_score,
-        f"metrics/ce_loss_without_sae{suffix}": ntp_loss,
-        f"metrics/ce_loss_with_sae{suffix}": recons_loss,
-        f"metrics/ce_loss_with_ablation{suffix}": zero_abl_loss,
+        f"metrics/l2_normalized_error{suffix}": l2_normalized_error.item(),
+        # f"metrics/CE_loss_score{suffix}": recons_score,
+        # f"metrics/ce_loss_without_sae{suffix}": ntp_loss,
+        # f"metrics/ce_loss_with_sae{suffix}": recons_loss,
+        # f"metrics/ce_loss_with_ablation{suffix}": zero_abl_loss,
     }
-    if getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "wandb" and wandb.run is not None:
+    if getattr(sparse_autoencoder.cfg, "logger_backend") == "wandb" and wandb.run is not None:
         wandb.log(metrics, step=n_training_steps)
-    elif getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "clearml":
+    elif getattr(sparse_autoencoder.cfg, "logger_backend") == "clearml":
         for key, value in metrics.items():
             if "/" in key:
                 title, series = key.split("/", 1)
@@ -93,82 +95,84 @@ def run_evals(
                 value=float(value),
                 iteration=n_training_steps,
             )
+    else:
+        return metrics
 
-    head_index = sparse_autoencoder.cfg.hook_point_head_index
+    # head_index = sparse_autoencoder.cfg.hook_point_head_index
 
-    def standard_replacement_hook(activations: torch.Tensor, hook: Any):
-        activations = sparse_autoencoder.forward(activations)[0].to(activations.dtype)
-        return activations
+    # def standard_replacement_hook(activations: torch.Tensor, hook: Any):
+    #     activations = sparse_autoencoder.forward(activations)[0].to(activations.dtype)
+    #     return activations
 
-    def head_replacement_hook(activations: torch.Tensor, hook: Any):
-        new_actions = sparse_autoencoder.forward(activations[:, :, head_index])[0].to(
-            activations.dtype
-        )
-        activations[:, :, head_index] = new_actions
-        return activations
+    # def head_replacement_hook(activations: torch.Tensor, hook: Any):
+    #     new_actions = sparse_autoencoder.forward(activations[:, :, head_index])[0].to(
+    #         activations.dtype
+    #     )
+    #     activations[:, :, head_index] = new_actions
+    #     return activations
 
-    head_index = sparse_autoencoder.cfg.hook_point_head_index
-    replacement_hook = (
-        standard_replacement_hook if head_index is None else head_replacement_hook
-    )
+    # head_index = sparse_autoencoder.cfg.hook_point_head_index
+    # replacement_hook = (
+    #     standard_replacement_hook if head_index is None else head_replacement_hook
+    # )
 
-    # get attn when using reconstructed activations
-    with model.hooks(fwd_hooks=[(hook_point, partial(replacement_hook))]):
-        _, new_cache = model.run_with_cache(
-            eval_tokens, names_filter=[get_act_name("pattern", hook_point_layer)]
-        )
-        patterns_reconstructed = (
-            new_cache[get_act_name("pattern", hook_point_layer)][
-                :, hook_point_head_index
-            ]
-            .detach()
-            .cpu()
-        )
-        del new_cache
+    # # get attn when using reconstructed activations
+    # with model.hooks(fwd_hooks=[(hook_point, partial(replacement_hook))]):
+    #     _, new_cache = model.run_with_cache(
+    #         eval_tokens, names_filter=[get_act_name("pattern", hook_point_layer)]
+    #     )
+    #     patterns_reconstructed = (
+    #         new_cache[get_act_name("pattern", hook_point_layer)][
+    #             :, hook_point_head_index
+    #         ]
+    #         .detach()
+    #         .cpu()
+    #     )
+    #     del new_cache
 
-    # get attn when using reconstructed activations
-    with model.hooks(fwd_hooks=[(hook_point, partial(zero_ablate_hook))]):
-        _, zero_ablation_cache = model.run_with_cache(
-            eval_tokens, names_filter=[get_act_name("pattern", hook_point_layer)]
-        )
-        patterns_ablation = (
-            zero_ablation_cache[get_act_name("pattern", hook_point_layer)][
-                :, hook_point_head_index
-            ]
-            .detach()
-            .cpu()
-        )
-        del zero_ablation_cache
+    # # get attn when using reconstructed activations
+    # with model.hooks(fwd_hooks=[(hook_point, partial(zero_ablate_hook))]):
+    #     _, zero_ablation_cache = model.run_with_cache(
+    #         eval_tokens, names_filter=[get_act_name("pattern", hook_point_layer)]
+    #     )
+    #     patterns_ablation = (
+    #         zero_ablation_cache[get_act_name("pattern", hook_point_layer)][
+    #             :, hook_point_head_index
+    #         ]
+    #         .detach()
+    #         .cpu()
+    #     )
+    #     del zero_ablation_cache
 
-    if sparse_autoencoder.cfg.hook_point_head_index:
-        kl_result_reconstructed = kl_divergence_attention(
-            patterns_original, patterns_reconstructed
-        )
-        kl_result_reconstructed = kl_result_reconstructed.sum(dim=-1).numpy()
+    # if sparse_autoencoder.cfg.hook_point_head_index:
+    #     kl_result_reconstructed = kl_divergence_attention(
+    #         patterns_original, patterns_reconstructed
+    #     )
+    #     kl_result_reconstructed = kl_result_reconstructed.sum(dim=-1).numpy()
 
-        kl_result_ablation = kl_divergence_attention(
-            patterns_original, patterns_ablation
-        )
-        kl_result_ablation = kl_result_ablation.sum(dim=-1).numpy()
+    #     kl_result_ablation = kl_divergence_attention(
+    #         patterns_original, patterns_ablation
+    #     )
+    #     kl_result_ablation = kl_result_ablation.sum(dim=-1).numpy()
 
-        kls = {
-            f"metrics/kldiv_reconstructed{suffix}": kl_result_reconstructed.mean().item(),
-            f"metrics/kldiv_ablation{suffix}": kl_result_ablation.mean().item(),
-        }
-        if getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "wandb" and wandb.run is not None:
-            wandb.log(kls, step=n_training_steps)
-        elif getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "clearml":
-            for key, value in kls.items():
-                if "/" in key:
-                    title, series = key.split("/", 1)
-                else:
-                    title, series = "metrics", key
-                ClearMLLogger.current_logger().report_scalar(
-                    title=title,
-                    series=series,
-                    value=float(value),
-                    iteration=n_training_steps,
-                )
+    #     kls = {
+    #         f"metrics/kldiv_reconstructed{suffix}": kl_result_reconstructed.mean().item(),
+    #         f"metrics/kldiv_ablation{suffix}": kl_result_ablation.mean().item(),
+    #     }
+    #     if getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "wandb" and wandb.run is not None:
+    #         wandb.log(kls, step=n_training_steps)
+    #     elif getattr(sparse_autoencoder.cfg, "logger_backend", "wandb") == "clearml":
+    #         for key, value in kls.items():
+    #             if "/" in key:
+    #                 title, series = key.split("/", 1)
+    #             else:
+    #                 title, series = "metrics", key
+    #             ClearMLLogger.current_logger().report_scalar(
+    #                 title=title,
+    #                 series=series,
+    #                 value=float(value),
+    #                 iteration=n_training_steps,
+    #             )
 
 
 def recons_loss_batched(

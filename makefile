@@ -8,7 +8,10 @@ stop:
 	docker stop $(CONTAINER_NAME)
 
 jupyter:
-	jupyter lab --allow-root --ip=0.0.0.0 --port=8895 --no-browser --NotebookApp.token=mats --ServerApp.contents_manager_class=jupyter_server.services.contents.filemanager.FileContentsManager
+	mkdir -p .jupyter_isolated/kernels && \
+	mkdir -p .jupyter_isolated/config && \
+	python -m ipykernel install --prefix=.jupyter_isolated --name=ilya_env --display-name="Python (ilya)" && \
+	JUPYTER_CONFIG_DIR=./.jupyter_isolated/config JUPYTER_DATA_DIR=./.jupyter_isolated JUPYTER_PATH=./.jupyter_isolated JUPYTER_CONFIG_PATH=./.jupyter_isolated/config jupyter lab --allow-root --ip=0.0.0.0 --port=8893 --no-browser --ServerApp.token=mats --ServerApp.contents_manager_class=jupyter_server.services.contents.filemanager.FileContentsManager
 
 run_docker:
 	docker run -d -it --rm \
@@ -33,6 +36,19 @@ train_sae_test:
 		--config=configs/train.yaml \
 		--hook_point_layer="[7,12]" \
 		--hook_point="blocks.{layer}.hook_resid_pre"
+		
+train_sae_one:
+	python train_sae.py \
+		--config=configs/train.yaml \
+		--hook_point_layer="[10]" \
+		--hook_point="blocks.{layer}.hook_resid_pre"
+
+train_sae_try:
+	python train_sae.py \
+		--config=configs/try.yaml \
+		--hook_point_layer="[10]" \
+		--hook_point="blocks.{layer}.hook_resid_pre"
+
 
 train_all_saes3:
 	./run_parallel_queue.sh

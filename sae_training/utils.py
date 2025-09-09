@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 import torch
 from transformer_lens import HookedTransformer, HookedTransformerConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformer_lens.loading_from_pretrained import OFFICIAL_MODEL_NAMES
+from transformer_lens.loading_from_pretrained import OFFICIAL_MODEL_NAMES, convert_llama_weights
 
 
 from sae_training.activations_store import ActivationsStore
@@ -147,43 +147,78 @@ def shuffle_activations_pairwise(datapath: str, buffer_idx_range: Tuple[int, int
     torch.save(shuffled_buffer2, f"{datapath}/{buffer_idx2}.pt")
 
 
-def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedTransformer:
+def get_custom_hf_model(model_name: str, kwargs: Dict[str, Any] = {}) -> HookedTransformer: 
     hf_model = AutoModelForCausalLM.from_pretrained(
         model_name,
+        torch_dtype=torch.float32,
+        device_map="cpu",
         **kwargs
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name,
-    )
-
+    
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    
     hf_config = hf_model.config
-
-    # Создаем конфигурацию для TransformerLens
-    # Ограничиваем размер контекста для экономии памяти
-    max_ctx = min(hf_config.max_position_embeddings, 2048)
-
-    cfg = HookedTransformerConfig(
-        n_layers=hf_config.num_hidden_layers,
-        d_model=hf_config.hidden_size,
-        d_head=hf_config.hidden_size // hf_config.num_attention_heads,
-        n_heads=hf_config.num_attention_heads,
-        d_mlp=hf_config.intermediate_size,
-        d_vocab=hf_config.vocab_size,
-        n_ctx=max_ctx,  # Ограничиваем размер контекста
-        act_fn=hf_config.hidden_act,  # Llama использует SiLU
-        model_name=model_name,
-        normalization_type="RMS",  # Llama использует RMSNorm
-        device="cpu",
-        use_hook_mlp_in=True,
-    )
-
+    
+    cfg_dict = {
+        "d_model": hf_config.hidden_size,
+        "d_head": hf_config.hidden_size // hf_config.num_attention_heads,
+        "n_heads": hf_config.num_attention_heads,
+        "d_mlp": hf_config.intermediate_size,
+        "n_layers": hf_config.num_hidden_layers,
+        "n_ctx": min(hf_config.max_position_embeddings, 2048),
+        "eps": getattr(hf_config, 'rms_norm_eps', 1e-6),
+        "d_vocab": hf_config.vocab_size,
+        "act_fn": hf_config.hidden_act,
+        "normalization_type": "RMS",
+        "positional_embedding_type": "rotary",
+        "rotary_adjacent_pairs": False,
+        "rotary_dim": hf_config.hidden_size // hf_config.num_attention_heads,
+        "final_rms": True,
+        "gated_mlp": True,
+        "model_name": model_name.split("/")[-1],
+        "init_weights": False,
+        "device": "cpu",
+        "dtype": torch.float32,
+    }
+    
+    if hasattr(hf_config, 'num_key_value_heads') and hf_config.num_key_value_heads != hf_config.num_attention_heads:
+        cfg_dict["n_key_value_heads"] = hf_config.num_key_value_heads
+    
+    if hasattr(hf_config, 'rope_theta'):
+        cfg_dict["rotary_base"] = hf_config.rope_theta
+        print(f"Included rotary_base = {hf_config.rope_theta}")
+    
+    
+    cfg = HookedTransformerConfig.from_dict(cfg_dict)
+    
+    for param in hf_model.parameters():
+        param.requires_grad = False
+    
+    state_dict = convert_llama_weights(hf_model, cfg)
     model = HookedTransformer(cfg)
-
-    model.load_state_dict(hf_model.state_dict(), strict=False)
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+    
+    print(f"Loading weights:")
+    print(f"  - Missing keys: {len(missing_keys)}")
+    print(f"  - Unexpected keys: {len(unexpected_keys)}")
+    
+    if missing_keys:
+        print(f"First 5 missing keys:")
+        for i, key in enumerate(missing_keys[:5]):
+            print(f"    {i+1}. {key}")
+    
+    if unexpected_keys:
+        print(f"First 5 unexpected keys:")
+        for i, key in enumerate(unexpected_keys[:5]):
+            print(f"    {i+1}. {key}")
+    
     model.set_tokenizer(tokenizer)
-
+    
+    print("✓ Model created and weights loaded!")
+    
     return model
-
 
 def _parse_dtype(dtype_str: str) -> torch.dtype:
     mapping = {

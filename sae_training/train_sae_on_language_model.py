@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 import os
-import glob
-import re
 from typing import Any, NamedTuple, cast
 
 import torch
@@ -405,12 +403,15 @@ def _build_train_step_log_dict(
     per_token_l2_loss = (sae_out - sae_in).pow(2).sum(dim=-1).squeeze()
     total_variance = (sae_in - sae_in.mean(0)).pow(2).sum(-1)
     explained_variance = 1 - per_token_l2_loss / total_variance
+    
+    l1_real = l1_loss.item() / sparse_autoencoder.l1_coefficient
+    l1_real_full = l1_real / (sparse_autoencoder.d_sae)
 
     return {
         # losses
         f"losses/mse_loss{wandb_suffix}": mse_loss.item(),
-        f"losses/l1_loss{wandb_suffix}": l1_loss.item()
-        / sparse_autoencoder.l1_coefficient,  # normalize by l1 coefficient
+        f"losses/l1_loss{wandb_suffix}": l1_real,
+        f"losses/l1_loss_full{wandb_suffix}": l1_real_full,
         f"losses/ghost_grad_loss{wandb_suffix}": ghost_grad_loss.item(),
         f"losses/overall_loss{wandb_suffix}": loss.item(),
         # variance explained

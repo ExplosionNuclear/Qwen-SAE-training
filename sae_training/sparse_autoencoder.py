@@ -110,7 +110,7 @@ class SparseAutoencoder(HookedRootModule):
             torch.pow((sae_out - x.float()), 2)
             / (x_centred**2).sum(dim=-1, keepdim=True).sqrt()
         )
-
+        
         mse_loss_ghost_resid = torch.tensor(0.0, dtype=self.dtype, device=self.device)
         # gate on config and training so evals is not slowed down.
         if (
@@ -143,11 +143,13 @@ class SparseAutoencoder(HookedRootModule):
 
             mse_loss_ghost_resid = mse_loss_ghost_resid.mean()
 
-        mse_loss = mse_loss.mean()
+        # mse_loss = mse_loss.mean()
+        mse_loss = torch.pow((sae_out - x.float()), 2).sum(dim=-1, keepdim=True).mean()
+
         sparsity = feature_acts.norm(p=self.lp_norm, dim=1).mean(dim=(0,))
         l1_loss = self.l1_coefficient * sparsity
         loss = mse_loss + l1_loss + mse_loss_ghost_resid
-
+        
         return ForwardOutput(
             sae_out=sae_out,
             feature_acts=feature_acts,

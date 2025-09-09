@@ -171,3 +171,4 @@ activations/
 
 feature_dashboards/
 research/
+.jupyter_isolated/

@@ -29,11 +29,7 @@ def language_model_sae_runner(cfg: LanguageModelSAERunnerConfig):
         )
 
     if cfg.from_pretrained_path is not None:
-        (
-            model,
-            sparse_autoencoder,
-            activations_loader,
-        ) = LMSparseAutoencoderSessionloader.load_session_from_pretrained(
+        model, sparse_autoencoder, activations_loader = LMSparseAutoencoderSessionloader.load_session_from_pretrained(
             cfg.from_pretrained_path
         )
         cfg = sparse_autoencoder.cfg
