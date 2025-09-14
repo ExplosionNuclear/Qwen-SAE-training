@@ -249,8 +249,8 @@ def _parse_hook_point_layer(hook_point_layer: Any) -> list[int]:
 
 
 def get_hub_repo_id(model_name: str, hook_point: str) -> str:
-    return f"Lucid-Layers-Inc/{model_name.split('/')[-1]}-{hook_point.split('.')[-1]}-SAE"
+    return f"ExplosionNuclear/{model_name.split('/')[-1]}-{hook_point.split('.')[-1]}-SAE"
 
 
 def get_project_name(model_name: str, hook_point: str) -> str:
-    return f"mats_sae_training_{model_name.split('/')[-1]}_{hook_point.split('.')[-1]}-SAE"
+    return f"Qwen_sae_training_{model_name.split('/')[-1]}_{hook_point.split('.')[-1]}-SAE"
